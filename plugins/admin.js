@@ -5,15 +5,20 @@ const { updateGroup, addWarning, getWarnings, clearWarnings } = require('../lib/
 // Helper function to get bot number correctly
 function getBotNumber(conn) {
     try {
+        // Try multiple methods to get bot number
         if (conn.user?.id) {
+            // Method 1: Standard format
             const botNum = conn.user.id.split(":")[0] + "@s.whatsapp.net";
             return botNum;
         } else if (conn.user?.jid) {
+            // Method 2: JID format
             return conn.user.jid;
         } else if (conn.authState?.creds?.me?.id) {
+            // Method 3: Auth state
             const botNum = conn.authState.creds.me.id.split(":")[0] + "@s.whatsapp.net";
             return botNum;
         }
+        // Fallback
         return conn.decodeJid(conn.user.id);
     } catch (e) {
         console.error("Error getting bot number:", e);
@@ -23,8 +28,14 @@ function getBotNumber(conn) {
 
 // Helper function to check if user/bot is admin
 function isAdmin(participants, jid) {
-    const participant = participants.find(p => p.id === jid);
+    // Check both phoneNumber and id fields for compatibility
+    const participant = participants.find(p => p.phoneNumber === jid || p.id === jid);
     return participant?.admin ? true : false;
+}
+
+// Helper function to get participant
+function getParticipant(participants, jid) {
+    return participants.find(p => p.phoneNumber === jid || p.id === jid);
 }
 
 // Add member
@@ -38,20 +49,24 @@ cmd({
 },
 async (conn, mek, m, { reply, text }) => {
     try {
+        // Check if user is admin
         const groupMetadata = await conn.groupMetadata(m.from);
         const participants = groupMetadata.participants;
         
+        // Get bot number using helper function
         const botNumber = getBotNumber(conn);
         
         if (!botNumber) {
-            return await reply('❌ Bot number එක හොයාගන්න බැරි වුනා.');
+            console.log("Bot user info:", conn.user);
+            return await reply('❌ Bot number එක හොයාගන්න බැරි වුනා. Developer කෙනෙක්ට කියන්න.');
         }
         
+        // Check admin status using helper functions
         const botAdmin = isAdmin(participants, botNumber);
         const userAdmin = isAdmin(participants, m.sender);
 
         if (!botAdmin) {
-            return await reply('❌ Bot admin නෙවෙයි! කරුණාකර bot එක group admin කරන්න.');
+            return await reply('❌ Bot admin නෙවෙයි! කරුණාකර bot එක group එකේ admin කරන්න.');
         }
 
         if (!userAdmin && !config.isOwner(m.sender)) {
@@ -59,65 +74,27 @@ async (conn, mek, m, { reply, text }) => {
         }
 
         if (!text) {
-            return await reply('❌ කරුණාකර number එකක් දෙන්න!\n\nExample:\n.add 94712345678\n.add 0712345678');
+            return await reply('❌ කරුණාකර number එකක් දෙන්න!\n\nExample: .add 94xxxxxxxxx');
         }
 
-        // Clean and format number
         let number = text.replace(/[^0-9]/g, '');
         
-        // Add country code if not present
-        if (number.startsWith('0')) {
-            number = '94' + number.substring(1);
-        } else if (!number.startsWith('94')) {
+        if (!number.startsWith('94')) {
             number = '94' + number;
         }
 
-        const jid = number + '@s.whatsapp.net';
-
         await m.react('⏳');
 
-        // Execute add command and handle response
-        const result = await conn.groupParticipantsUpdate(m.from, [jid], 'add');
-        
-        console.log('Add result:', JSON.stringify(result, null, 2));
-        
-        // Check result
-        if (result && result[0]) {
-            const status = result[0].status;
-            
-            if (status === 200 || status === '200') {
-                await reply(`✅ @${number} group එකට add කරන ලදී!`, { mentions: [jid] });
-                await m.react('✅');
-            } else if (status === 403 || status === '403') {
-                await reply(`❌ @${number} privacy settings හින්දා add කරන්න බැහැ!\n\n💡 ඔවුන්ට invite link එකක් යවන්න.`, { mentions: [jid] });
-                await m.react('❌');
-            } else if (status === 408 || status === '408') {
-                await reply(`❌ @${number} දැනටමත් group එකේ!`, { mentions: [jid] });
-                await m.react('⚠️');
-            } else if (status === 409 || status === '409') {
-                await reply(`❌ @${number} recently group එකෙන් remove වුණා. කරුණාකර පසුව උත්සාහ කරන්න.`, { mentions: [jid] });
-                await m.react('⚠️');
-            } else {
-                await reply(`⚠️ @${number} add කරන්න උත්සාහ කළා, නමුත් status unclear: ${status}`, { mentions: [jid] });
-                await m.react('⚠️');
-            }
-        } else {
-            await reply(`✅ @${number} add කළා (verification අපහසුයි)`, { mentions: [jid] });
-            await m.react('✅');
-        }
+        const jid = number + '@s.whatsapp.net';
+        await conn.groupParticipantsUpdate(m.from, [jid], 'add');
+
+        await reply(`✅ @${number} group එකට add කරන ලදී!`);
+        await m.react('✅');
 
     } catch (e) {
         console.error("Add command error:", e);
         await m.react('❌');
-        
-        // Better error messages
-        if (e.message.includes('privacy')) {
-            await reply('❌ Number එකේ privacy settings හින්දා add කරන්න බැහැ!');
-        } else if (e.message.includes('not-authorized')) {
-            await reply('❌ Bot එකට permission නැහැ!');
-        } else {
-            await reply('❌ Error: ' + e.message);
-        }
+        await reply('❌ Error: ' + e.message);
     }
 });
 
@@ -140,7 +117,7 @@ async (conn, mek, m, { reply }) => {
         const userAdmin = isAdmin(participants, m.sender);
 
         if (!botAdmin) {
-            return await reply('❌ Bot admin නෙවෙයි! කරුණාකර bot එක group admin කරන්න.');
+            return await reply('❌ Bot admin නෙවෙයි!');
         }
 
         if (!userAdmin && !config.isOwner(m.sender)) {
@@ -148,47 +125,25 @@ async (conn, mek, m, { reply }) => {
         }
 
         if (!m.quoted && !m.mentionedJid?.length) {
-            return await reply('❌ Remove කරන්න ඕනේ කෙනාව mention කරන්න හෝ reply කරන්න!\n\nExamples:\n.kick @user\n.kick (reply to message)');
+            return await reply('❌ Remove කරන්න ඕනේ කෙනාව mention කරන්න හෝ reply කරන්න!');
         }
 
         const user = m.quoted ? m.quoted.sender : m.mentionedJid[0];
 
-        // Don't allow kicking bot itself
-        if (user === botNumber) {
-            return await reply('❌ මට මාව kick කරන්න බැහැ! 😅');
-        }
-
         // Check if target is admin
         const targetAdmin = isAdmin(participants, user);
         if (targetAdmin) {
-            return await reply('❌ Admin කෙනෙක් remove කරන්න බැහැ! පළමුව demote කරන්න.');
+            return await reply('❌ Admin කෙනෙක් remove කරන්න බැහැ!');
         }
 
         await m.react('⏳');
 
-        // Execute kick and handle response
-        const result = await conn.groupParticipantsUpdate(m.from, [user], 'remove');
-        
-        console.log('Kick result:', JSON.stringify(result, null, 2));
-        
-        // Check result
-        if (result && result[0]) {
-            const status = result[0].status;
-            
-            if (status === 200 || status === '200') {
-                await reply(`✅ @${user.split('@')[0]} group එකෙන් remove කරන ලදී!`, { mentions: [user] });
-                await m.react('✅');
-            } else {
-                await reply(`⚠️ Remove කරන්න උත්සාහ කළා, status: ${status}`, { mentions: [user] });
-                await m.react('⚠️');
-            }
-        } else {
-            await reply(`✅ @${user.split('@')[0]} remove කළා (verification අපහසුයි)`, { mentions: [user] });
-            await m.react('✅');
-        }
+        await conn.groupParticipantsUpdate(m.from, [user], 'remove');
+
+        await reply(`✅ @${user.split('@')[0]} group එකෙන් remove කරන ලදී!`);
+        await m.react('✅');
 
     } catch (e) {
-        console.error("Kick command error:", e);
         await m.react('❌');
         await reply('❌ Error: ' + e.message);
     }
@@ -225,20 +180,14 @@ async (conn, mek, m, { reply }) => {
 
         const user = m.quoted ? m.quoted.sender : m.mentionedJid[0];
 
-        // Check if already admin
-        if (isAdmin(participants, user)) {
-            return await reply('⚠️ මේ user දැනටමත් admin කෙනෙක්!');
-        }
-
         await m.react('⏳');
 
         await conn.groupParticipantsUpdate(m.from, [user], 'promote');
 
-        await reply(`✅ @${user.split('@')[0]} admin කරන ලදී!`, { mentions: [user] });
+        await reply(`✅ @${user.split('@')[0]} admin කරන ලදී!`);
         await m.react('✅');
 
     } catch (e) {
-        console.error("Promote error:", e);
         await m.react('❌');
         await reply('❌ Error: ' + e.message);
     }
@@ -275,25 +224,267 @@ async (conn, mek, m, { reply }) => {
 
         const user = m.quoted ? m.quoted.sender : m.mentionedJid[0];
 
-        // Check if not admin
-        if (!isAdmin(participants, user)) {
-            return await reply('⚠️ මේ user admin කෙනෙක් නෙවෙයි!');
-        }
-
         await m.react('⏳');
 
         await conn.groupParticipantsUpdate(m.from, [user], 'demote');
 
-        await reply(`✅ @${user.split('@')[0]} admin තනතුරෙන් ඉවත් කරන ලදී!`, { mentions: [user] });
+        await reply(`✅ @${user.split('@')[0]} admin තනතුරෙන් ඉවත් කරන ලදී!`);
         await m.react('✅');
 
     } catch (e) {
-        console.error("Demote error:", e);
         await m.react('❌');
         await reply('❌ Error: ' + e.message);
     }
 });
 
-// Note: I'm showing only the core commands here for brevity
-// The remaining commands (tagall, hidetag, mute, unmute, warn, resetwarn) 
-// follow the same pattern and should be included in the full file
+// Tag all members
+cmd({
+    pattern: "tagall",
+    alias: ["tag", "all"],
+    desc: "Tag all group members",
+    category: "group",
+    react: "📢",
+    isGroup: true,
+    filename: __filename
+},
+async (conn, mek, m, { reply, text }) => {
+    try {
+        const groupMetadata = await conn.groupMetadata(m.from);
+        const participants = groupMetadata.participants;
+        const userAdmin = isAdmin(participants, m.sender);
+
+        if (!userAdmin && !config.isOwner(m.sender)) {
+            return await reply('❌ ඔබ admin නෙවෙයි!');
+        }
+
+        await m.react('📢');
+
+        const message = text || '📢 *Group Announcement*';
+        let tagMsg = `${message}\n\n`;
+
+        for (let participant of participants) {
+            const phone = participant.phoneNumber || participant.id;
+            tagMsg += `@${phone.split('@')[0]}\n`;
+        }
+
+        // Get all phone numbers for mentions
+        const mentions = participants.map(p => p.phoneNumber || p.id);
+
+        await conn.sendMessage(m.from, {
+            text: tagMsg,
+            mentions: mentions
+        }, { quoted: mek });
+
+        await m.react('✅');
+
+    } catch (e) {
+        await m.react('❌');
+        await reply('❌ Error: ' + e.message);
+    }
+});
+
+// Hide tag (send message without showing tags)
+cmd({
+    pattern: "hidetag",
+    alias: ["htag"],
+    desc: "Send message to all without showing tags",
+    category: "group",
+    react: "👻",
+    isGroup: true,
+    filename: __filename
+},
+async (conn, mek, m, { reply, text }) => {
+    try {
+        const groupMetadata = await conn.groupMetadata(m.from);
+        const participants = groupMetadata.participants;
+        const userAdmin = isAdmin(participants, m.sender);
+
+        if (!userAdmin && !config.isOwner(m.sender)) {
+            return await reply('❌ ඔබ admin නෙවෙයි!');
+        }
+
+        if (!text) {
+            return await reply('❌ කරුණාකර message එකක් දෙන්න!');
+        }
+
+        // Get all phone numbers for mentions
+        const mentions = participants.map(p => p.phoneNumber || p.id);
+
+        await conn.sendMessage(m.from, {
+            text: text,
+            mentions: mentions
+        }, { quoted: mek });
+
+        await m.react('✅');
+
+    } catch (e) {
+        await m.react('❌');
+        await reply('❌ Error: ' + e.message);
+    }
+});
+
+// Mute group
+cmd({
+    pattern: "mute",
+    desc: "Mute group (only admins can send)",
+    category: "group",
+    react: "🔇",
+    isGroup: true,
+    filename: __filename
+},
+async (conn, mek, m, { reply }) => {
+    try {
+        const groupMetadata = await conn.groupMetadata(m.from);
+        const participants = groupMetadata.participants;
+        const botNumber = getBotNumber(conn);
+        const botAdmin = isAdmin(participants, botNumber);
+        const userAdmin = isAdmin(participants, m.sender);
+
+        if (!botAdmin) {
+            return await reply('❌ Bot admin නෙවෙයි!');
+        }
+
+        if (!userAdmin && !config.isOwner(m.sender)) {
+            return await reply('❌ ඔබ admin නෙවෙයි!');
+        }
+
+        await conn.groupSettingUpdate(m.from, 'announcement');
+        await updateGroup(m.from, { mute: true });
+
+        await reply('🔇 Group mute කරන ලදී! Admin විතරයි message යවන්න පුළුවන්.');
+        await m.react('✅');
+
+    } catch (e) {
+        await m.react('❌');
+        await reply('❌ Error: ' + e.message);
+    }
+});
+
+// Unmute group
+cmd({
+    pattern: "unmute",
+    desc: "Unmute group (everyone can send)",
+    category: "group",
+    react: "🔊",
+    isGroup: true,
+    filename: __filename
+},
+async (conn, mek, m, { reply }) => {
+    try {
+        const groupMetadata = await conn.groupMetadata(m.from);
+        const participants = groupMetadata.participants;
+        const botNumber = getBotNumber(conn);
+        const botAdmin = isAdmin(participants, botNumber);
+        const userAdmin = isAdmin(participants, m.sender);
+
+        if (!botAdmin) {
+            return await reply('❌ Bot admin නෙවෙයි!');
+        }
+
+        if (!userAdmin && !config.isOwner(m.sender)) {
+            return await reply('❌ ඔබ admin නෙවෙයි!');
+        }
+
+        await conn.groupSettingUpdate(m.from, 'not_announcement');
+        await updateGroup(m.from, { mute: false });
+
+        await reply('🔊 Group unmute කරන ලදී! හැමෝටම message යවන්න පුළුවන්.');
+        await m.react('✅');
+
+    } catch (e) {
+        await m.react('❌');
+        await reply('❌ Error: ' + e.message);
+    }
+});
+
+// Warning system
+cmd({
+    pattern: "warn",
+    desc: "Warn a user (3 warns = kick)",
+    category: "group",
+    react: "⚠️",
+    isGroup: true,
+    filename: __filename
+},
+async (conn, mek, m, { reply, text }) => {
+    try {
+        const groupMetadata = await conn.groupMetadata(m.from);
+        const participants = groupMetadata.participants;
+        const botNumber = getBotNumber(conn);
+        const botAdmin = isAdmin(participants, botNumber);
+        const userAdmin = isAdmin(participants, m.sender);
+
+        if (!botAdmin) {
+            return await reply('❌ Bot admin නෙවෙයි!');
+        }
+
+        if (!userAdmin && !config.isOwner(m.sender)) {
+            return await reply('❌ ඔබ admin නෙවෙයි!');
+        }
+
+        if (!m.quoted && !m.mentionedJid?.length) {
+            return await reply('❌ Warn කරන්න ඕනේ කෙනාව mention කරන්න හෝ reply කරන්න!');
+        }
+
+        const user = m.quoted ? m.quoted.sender : m.mentionedJid[0];
+        const reason = text || 'No reason provided';
+
+        // Add warning to database
+        await addWarning(user, m.from, reason, m.sender);
+
+        // Get total warnings
+        const warnings = await getWarnings(user, m.from);
+        const warnCount = warnings.length;
+
+        if (warnCount >= 3) {
+            // Kick user
+            await conn.groupParticipantsUpdate(m.from, [user], 'remove');
+            await clearWarnings(user, m.from);
+            await reply(`🚫 @${user.split('@')[0]} warnings 3ක් හින්දා kick කරන ලදී!`);
+        } else {
+            await reply(`⚠️ @${user.split('@')[0]} warned කරන ලදී!\n\n📝 *Reason:* ${reason}\n⚠️ *Warnings:* ${warnCount}/3`);
+        }
+
+        await m.react('✅');
+
+    } catch (e) {
+        await m.react('❌');
+        await reply('❌ Error: ' + e.message);
+    }
+});
+
+// Reset warnings
+cmd({
+    pattern: "resetwarn",
+    alias: ["unwarn"],
+    desc: "Reset user warnings",
+    category: "group",
+    react: "🔄",
+    isGroup: true,
+    filename: __filename
+},
+async (conn, mek, m, { reply }) => {
+    try {
+        const groupMetadata = await conn.groupMetadata(m.from);
+        const participants = groupMetadata.participants;
+        const userAdmin = isAdmin(participants, m.sender);
+
+        if (!userAdmin && !config.isOwner(m.sender)) {
+            return await reply('❌ ඔබ admin නෙවෙයි!');
+        }
+
+        if (!m.quoted && !m.mentionedJid?.length) {
+            return await reply('❌ Reset කරන්න ඕනේ කෙනාව mention කරන්න හෝ reply කරන්න!');
+        }
+
+        const user = m.quoted ? m.quoted.sender : m.mentionedJid[0];
+
+        await clearWarnings(user, m.from);
+        await reply(`✅ @${user.split('@')[0]} warnings reset කරන ලදී!`);
+        await m.react('✅');
+
+    } catch (e) {
+        await m.react('❌');
+        await reply('❌ Error: ' + e.message);
+    }
+});
