@@ -4,6 +4,7 @@
  * ║   Created by: Shehan Vimukthi                             ║
  * ║   Enhanced with AI Features + Speed Mode V2              ║
  * ║   ⚡ Pure Optimization - NO Feature Loss                 ║
+ * ║   🔧 FIXED - Error handling improved                     ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
@@ -312,7 +313,7 @@ async function startBot() {
     conn.ev.on('creds.update', saveCreds);
 
     // ════════════════════════════════════════════════════════════════════
-    // MESSAGE HANDLER WITH SPEED MODE V2 SUPPORT (UPDATED)
+    // MESSAGE HANDLER WITH SPEED MODE V2 SUPPORT (FIXED)
     // ════════════════════════════════════════════════════════════════════
     conn.ev.on('messages.upsert', async (m) => {
         // Check if message exists
@@ -325,6 +326,12 @@ async function startBot() {
 
             // Serialize message
             const msg = serialize(mek);
+
+            // ════════════════════════════════════════════════════════════════════
+            // SAFETY CHECKS (FIXED)
+            // ════════════════════════════════════════════════════════════════════
+            if (!msg || !msg.from || !msg.sender) return;
+            // ════════════════════════════════════════════════════════════════════
 
             // Get message body
             let body = msg.body;
@@ -342,35 +349,44 @@ async function startBot() {
             // ════════════════════════════════════════════════════════════════════
 
             if (!body) {
-                body = msg.text;
+                body = msg.text || '';
             }
 
             // Auto read messages
             if (config.AUTO_READ === 'true') {
-                conn.readMessages([mek.key]);
+                try {
+                    conn.readMessages([mek.key]);
+                } catch (e) {}
             }
 
             // Auto status view
             if (config.AUTO_STATUS_READ === 'true' && msg.isStatus) {
-                await conn.readMessages([mek.key]);
+                try {
+                    await conn.readMessages([mek.key]);
+                } catch (e) {}
             }
 
             // Check if group
-            const isGroup = msg.from.endsWith('@g.us');
+            const isGroup = msg.from && msg.from.endsWith('@g.us');
             const sender = msg.from;
             const m_sender = msg.sender;
             const m_reply_obj = m_reply ? Baileys.proto.WebMessageInfo.fromObject({ message: { [Object.keys(m_reply)[0]]: m_reply[Object.keys(m_reply)[0]] } }) : null;
 
             // Group management
             if (isGroup) {
-                const groupMetadata = await conn.groupMetadata(msg.from);
-                const participants = groupMetadata.participants;
+                try {
+                    const groupMetadata = await conn.groupMetadata(msg.from);
+                    const participants = groupMetadata.participants;
 
-                msg.isGroup = isGroup;
-                msg.groupMetadata = groupMetadata;
-                msg.groupMembers = participants;
-                msg.isBotAdmin = !!participants.find(p => p.id === conn.user.jid && (p.admin === 'admin' || p.admin === 'superadmin'));
-                msg.isAdmin = !!participants.find(p => p.id === m_sender && (p.admin === 'admin' || p.admin === 'superadmin'));
+                    msg.isGroup = isGroup;
+                    msg.groupMetadata = groupMetadata;
+                    msg.groupMembers = participants;
+                    msg.isBotAdmin = !!participants.find(p => p.id === conn.user.jid && (p.admin === 'admin' || p.admin === 'superadmin'));
+                    msg.isAdmin = !!participants.find(p => p.id === m_sender && (p.admin === 'admin' || p.admin === 'superadmin'));
+                } catch (e) {
+                    msg.isGroup = false;
+                    console.log('⚠️ Group metadata error:', e.message);
+                }
             } else {
                 msg.isGroup = false;
             }
@@ -379,55 +395,63 @@ async function startBot() {
             // ANTILINK SYSTEM
             // ============================================
             if (isGroup && config.ANTILINK_ENABLED === 'true') {
-                const group = await getGroup(msg.from);
-                
-                if (group && group.antilinkEnabled) {
-                    const linkPattern = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(wa\.me\/[^\s]+)|(.com|.org|.net|.co|.io)\/[^\s]+/gi;
+                try {
+                    const group = await getGroup(msg.from);
                     
-                    if (linkPattern.test(body)) {
-                        if (msg.isAdmin || msg.sender === groupMetadata.owner) {
-                            // Admin posted link - allow
-                        } else {
-                            // Delete message
-                            try {
-                                await conn.sendMessage(msg.from, { delete: mek.key });
-                            } catch (e) {}
+                    if (group && group.antilinkEnabled) {
+                        const linkPattern = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(wa\.me\/[^\s]+)|(.com|.org|.net|.co|.io)\/[^\s]+/gi;
+                        
+                        if (linkPattern.test(body)) {
+                            if (msg.isAdmin || msg.sender === msg.groupMetadata?.owner) {
+                                // Admin posted link - allow
+                            } else {
+                                // Delete message
+                                try {
+                                    await conn.sendMessage(msg.from, { delete: mek.key });
+                                } catch (e) {}
 
-                            // Take action
-                            if (group.antilinkAction === 'kick') {
-                                await conn.groupParticipantsUpdate(msg.from, [m_sender], 'remove');
-                                await conn.sendMessage(msg.from, {
-                                    text: `🚫 @${m_sender.split('@')[0]} link එකක් යැව්වා හින්දා kick කරන ලදී!`,
-                                    mentions: [m_sender]
-                                });
-                            } else if (group.antilinkAction === 'warn') {
-                                await addWarning(m_sender, msg.from, 'Sent a link', conn.user.id);
-                                const warnings = await getWarnings(m_sender, msg.from);
-                                
-                                if (warnings.length >= 3) {
-                                    await conn.groupParticipantsUpdate(msg.from, [m_sender], 'remove');
-                                    await clearWarnings(m_sender, msg.from);
+                                // Take action
+                                if (group.antilinkAction === 'kick') {
+                                    try {
+                                        await conn.groupParticipantsUpdate(msg.from, [m_sender], 'remove');
+                                    } catch (e) {}
                                     await conn.sendMessage(msg.from, {
-                                        text: `🚫 @${m_sender.split('@')[0]} warnings 3ක් හින්දා kick කරන ලදී!`,
+                                        text: `🚫 @${m_sender.split('@')[0]} link එකක් යැව්වා හින්දා kick කරන ලදී!`,
                                         mentions: [m_sender]
                                     });
+                                } else if (group.antilinkAction === 'warn') {
+                                    await addWarning(m_sender, msg.from, 'Sent a link', conn.user.id);
+                                    const warnings = await getWarnings(m_sender, msg.from);
+                                    
+                                    if (warnings.length >= 3) {
+                                        try {
+                                            await conn.groupParticipantsUpdate(msg.from, [m_sender], 'remove');
+                                        } catch (e) {}
+                                        await clearWarnings(m_sender, msg.from);
+                                        await conn.sendMessage(msg.from, {
+                                            text: `🚫 @${m_sender.split('@')[0]} warnings 3ක් හින්දා kick කරන ලදී!`,
+                                            mentions: [m_sender]
+                                        });
+                                    } else {
+                                        await conn.sendMessage(msg.from, {
+                                            text: `⚠️ @${m_sender.split('@')[0]} warned! Links යවන්න එපා!\nWarnings: ${warnings.length}/3`,
+                                            mentions: [m_sender]
+                                        });
+                                    }
                                 } else {
+                                    // Just delete
                                     await conn.sendMessage(msg.from, {
-                                        text: `⚠️ @${m_sender.split('@')[0]} warned! Links යවන්න එපා!\nWarnings: ${warnings.length}/3`,
+                                        text: `❌ @${m_sender.split('@')[0]} links යවන්න බැහැ!`,
                                         mentions: [m_sender]
                                     });
                                 }
-                            } else {
-                                // Just delete
-                                await conn.sendMessage(msg.from, {
-                                    text: `❌ @${m_sender.split('@')[0]} links යවන්න බැහැ!`,
-                                    mentions: [m_sender]
-                                });
+                                
+                                return; // Stop processing
                             }
-                            
-                            return; // Stop processing
                         }
                     }
+                } catch (e) {
+                    console.log('⚠️ Antilink error:', e.message);
                 }
             }
 
@@ -448,17 +472,19 @@ async function startBot() {
             if (!cmd) return;
 
             // Check if user is banned
-            const user = await getUser(msg.sender);
-            if (user?.banned) {
-                if (user.banExpiry && user.banExpiry < new Date()) {
-                    // Ban expired, unban
-                    await updateUser(msg.sender, { banned: false, banExpiry: null });
-                } else {
-                    return await conn.sendMessage(msg.from, {
-                        text: '❌ ඔබ bot එක use කරන්න ban කරලා තියෙනවා!'
-                    }, { quoted: mek });
+            try {
+                const user = await getUser(msg.sender);
+                if (user?.banned) {
+                    if (user.banExpiry && user.banExpiry < new Date()) {
+                        // Ban expired, unban
+                        await updateUser(msg.sender, { banned: false, banExpiry: null });
+                    } else {
+                        return await conn.sendMessage(msg.from, {
+                            text: '❌ ඔබ bot එක use කරන්න ban කරලා තියෙනවා!'
+                        }, { quoted: mek });
+                    }
                 }
-            }
+            } catch (e) {}
 
             // Check permissions
             const isOwner = config.isOwner(msg.sender);
@@ -486,9 +512,11 @@ async function startBot() {
 
             // React if configured
             if (cmd.react) {
-                await conn.sendMessage(msg.from, {
-                    react: { text: cmd.react, key: mek.key }
-                });
+                try {
+                    await conn.sendMessage(msg.from, {
+                        react: { text: cmd.react, key: mek.key }
+                    });
+                } catch (e) {}
             }
 
             // Debug log
@@ -531,9 +559,11 @@ async function startBot() {
                     return await conn.sendMessage(msg.from, { text }, { quoted: mek });
                 },
                 react: async (emoji) => {
-                    return await conn.sendMessage(msg.from, {
-                        react: { text: emoji, key: mek.key }
-                    });
+                    try {
+                        return await conn.sendMessage(msg.from, {
+                            react: { text: emoji, key: mek.key }
+                        });
+                    } catch (e) {}
                 }
             };
 
@@ -541,8 +571,10 @@ async function startBot() {
 
             // Log command usage to database
             if (config.MONGODB) {
-                const { logCommand } = require('./lib/database');
-                await logCommand(cmd.pattern, msg.sender, msg.isGroup ? msg.from : null);
+                try {
+                    const { logCommand } = require('./lib/database');
+                    await logCommand(cmd.pattern, msg.sender, msg.isGroup ? msg.from : null);
+                } catch (e) {}
             }
 
         } catch (e) {
