@@ -275,8 +275,28 @@ async function startBot() {
         // Messages handler with comprehensive error handling
         conn.ev.on('messages.upsert', async ({ messages }) => {
             try {
+                // ✅ VALIDATION: Check if messages array exists and has items
+                if (!messages || !Array.isArray(messages) || messages.length === 0) {
+                    return;
+                }
+
                 const mek = messages[0];
-                if (!mek.message) return;
+                
+                // ✅ VALIDATION: Check if message object exists
+                if (!mek || typeof mek !== 'object') {
+                    return;
+                }
+
+                // ✅ VALIDATION: Check if message has required properties
+                if (!mek.message || !mek.key) {
+                    return;
+                }
+
+                // ✅ VALIDATION: Check remoteJid exists (FIX FOR ERROR)
+                if (!mek.key.remoteJid || typeof mek.key.remoteJid !== 'string') {
+                    console.log('⚠️  Invalid message - missing or invalid remoteJid');
+                    return;
+                }
 
                 const m = await serialize(mek, conn);
                 const body = m.body;
