@@ -6,7 +6,7 @@ if (fs.existsSync('./config.env')) {
     require('dotenv').config({ path: './config.env' });
 }
 
-// Enhanced Configuration
+// Enhanced Configuration with Speed Mode V2
 const config = {
     // ==================== BOT INFO ====================
     SESSION_ID: process.env.SESSION_ID || "",
@@ -77,6 +77,17 @@ const config = {
     BAN_TIME: parseInt(process.env.BAN_TIME) || 3600, // seconds
     ANTI_CALL: process.env.ANTI_CALL || "false",
     ANTI_BOT: process.env.ANTI_BOT || "true",
+    
+    // ==================== SPEED MODE V2 (NEW) ====================
+    // Pure optimization - NO feature loss
+    // ඔයාගේ cheap hosting සඳහා perfect!
+    SPEED_MODE_ENABLED: process.env.SPEED_MODE_ENABLED || "true",
+    SPEED_MODE_LEVEL: process.env.SPEED_MODE_LEVEL || "balanced",
+    // Levels: light, balanced, turbo, ultra
+    // light = Aggressive caching (best for cheap hosting)
+    // balanced = Standard optimization (recommended for most)
+    // turbo = High performance (good servers)
+    // ultra = Maximum speed (powerful servers)
     
     // ==================== OTHER ====================
     PORT: process.env.PORT || 8000,
