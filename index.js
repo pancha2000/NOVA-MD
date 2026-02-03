@@ -203,11 +203,26 @@ async function startBot() {
             browser: Browsers.ubuntu('APEX-MD'),
             auth: state,
             getMessage: async (key) => {
-                if (store) {
-                    const msg = await store.loadMessage(key.remoteJid, key.id);
-                    return msg?.message || undefined;
+                try {
+                    // ✅ VALIDATION: Check if key exists
+                    if (!key || typeof key !== 'object') {
+                        return undefined;
+                    }
+                    
+                    // ✅ VALIDATION: Check if remoteJid exists
+                    if (!key.remoteJid || typeof key.remoteJid !== 'string') {
+                        return undefined;
+                    }
+                    
+                    if (store) {
+                        const msg = await store.loadMessage(key.remoteJid, key.id);
+                        return msg?.message || undefined;
+                    }
+                    return { conversation: 'APEX-MD' };
+                } catch (e) {
+                    console.log('⚠️  getMessage error:', e.message);
+                    return undefined;
                 }
-                return { conversation: 'APEX-MD' };
             }
         });
 
@@ -299,6 +314,12 @@ async function startBot() {
                 }
 
                 const m = await serialize(mek, conn);
+                
+                // ✅ If serialize returns null, skip message
+                if (!m) {
+                    return;
+                }
+                
                 const body = m.body;
 
                 // Auto read
@@ -478,15 +499,23 @@ async function startBot() {
                 }
 
             } catch (messageError) {
-                console.log('❌ Message Handler Error:', messageError.message);
+                // Detailed error logging
+                if (messageError.message && messageError.message.includes('remoteJid')) {
+                    console.log('⚠️  Caught remoteJid error - skipping message silently');
+                    // Don't send spam errors to owner for this common issue
+                    return;
+                }
                 
-                // 🔥 SEND ERROR TO OWNER
-                if (conn) {
+                console.log('❌ Message Handler Error:', messageError.message);
+                console.log('📍 Error Location:', messageError.stack?.split('\n')[1] || 'Unknown');
+                
+                // 🔥 SEND ERROR TO OWNER (only for serious errors)
+                if (conn && !messageError.message.includes('undefined')) {
                     await sendErrorToOwner(conn, messageError, 'Message Handler');
                 }
                 
                 if (config.DEBUG === 'true') {
-                    console.log(messageError);
+                    console.log('🐛 Full Error:', messageError);
                 }
             }
         });
