@@ -3,7 +3,7 @@
   "description": "APEX-MD V2 Enhanced — Advanced WhatsApp Bot with AI, Group Management, Downloads, and Auto Error Handling. Built with Baileys & Gemini AI.",
   "logo": "https://i.imgur.com/VlZ2Y0l.jpeg",
   "keywords": ["whatsapp", "bot", "baileys", "apex", "ai", "gemini", "group", "download"],
-  "documentation-link": "https://github.com/pancha2000/Apex-MD-v2.git",
+  "documentation-link": "https://github.com/pancha2000/Apex-MD-v2",
   "owner-verification": "cdilrukshi52@gmail.com",
   "env": {
     "SESSION_ID": {
