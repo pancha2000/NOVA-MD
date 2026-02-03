@@ -3,6 +3,7 @@
  * ║   APEX-MD V2 ENHANCED - WhatsApp Bot      ║
  * ║     Created by: Shehan Vimukthi           ║
  * ║     Enhanced with AI Features             ║
+ * ║     + Advanced Error Handler              ║
  * ╚═══════════════════════════════════════════╝
  */
 
@@ -16,7 +17,6 @@ const {
     delay
 } = Baileys;
 
-// makeInMemoryStore may not exist in all versions
 const makeInMemoryStore = Baileys.makeInMemoryStore || null;
 
 const pino = require('pino');
@@ -27,15 +27,23 @@ const qrcode = require('qrcode-terminal');
 const { File } = require('megajs');
 
 const config = require('./config');
-const { connectDB, getGroup, updateGroup, getUser, addWarning, getWarnings, clearWarnings } = require('./lib/database');
+const { connectDB, getGroup, updateGroup, getUser, updateUser, addWarning, getWarnings, clearWarnings } = require('./lib/database');
 const { handler } = require('./lib/commands');
 const { serialize } = require('./lib/functions');
+
+// 🔥 IMPORT ERROR HANDLER
+const { 
+    setupGlobalErrorHandlers, 
+    sendErrorToOwner, 
+    withErrorHandler,
+    sendStartupNotification 
+} = require('./lib/errorHandler');
 
 // Express server
 const app = express();
 const PORT = config.PORT || 8000;
 
-// Store (optional - may not be available in all Baileys versions)
+// Store
 let store = null;
 if (makeInMemoryStore && typeof makeInMemoryStore === 'function') {
     try {
@@ -56,16 +64,16 @@ if (!fs.existsSync(authFolder)) {
     fs.mkdirSync(authFolder, { recursive: true });
 }
 
-// Temp folder for downloads
+// Temp folder
 const tempFolder = path.join(__dirname, 'temp');
 if (!fs.existsSync(tempFolder)) {
     fs.mkdirSync(tempFolder, { recursive: true });
 }
 
 /**
- * Load all plugins
+ * Load all plugins with error handling
  */
-function loadPlugins() {
+const loadPlugins = withErrorHandler('Plugin Loading')(function() {
     const pluginFolder = path.join(__dirname, 'plugins');
     
     if (!fs.existsSync(pluginFolder)) {
@@ -74,28 +82,9 @@ function loadPlugins() {
     }
 
     let loaded = 0;
+    let failed = 0;
 
-    // Load plugins from subdirectories
-    const categories = ['downloads', 'ai', 'group', 'owner', 'utils', 'fun', 'media'];
-    
-    categories.forEach(category => {
-        const categoryPath = path.join(pluginFolder, category);
-        if (fs.existsSync(categoryPath)) {
-            const files = fs.readdirSync(categoryPath);
-            files.forEach(file => {
-                if (file.endsWith('.js')) {
-                    try {
-                        require(path.join(categoryPath, file));
-                        loaded++;
-                    } catch (e) {
-                        console.log(`❌ Plugin Load Error [${category}/${file}]:`, e.message);
-                    }
-                }
-            });
-        }
-    });
-
-    // Load root level plugins
+    // Load root level plugins only (no subdirectories)
     const rootFiles = fs.readdirSync(pluginFolder);
     rootFiles.forEach(file => {
         if (file.endsWith('.js')) {
@@ -104,23 +93,26 @@ function loadPlugins() {
                 loaded++;
             } catch (e) {
                 console.log(`❌ Plugin Load Error [${file}]:`, e.message);
+                failed++;
             }
         }
     });
 
     console.log(`✅ Loaded ${loaded} plugins successfully`);
-}
+    if (failed > 0) {
+        console.log(`⚠️  ${failed} plugins failed to load`);
+    }
+});
 
 /**
- * Download session from Mega.nz
+ * Download session from Mega.nz with error handling
  */
-async function downloadSession() {
+const downloadSession = withErrorHandler('Session Download')(async function() {
     if (!config.SESSION_ID) {
         console.log('⚠️  SESSION_ID නැහැ config.env එකේ!');
         return false;
     }
 
-    // Check if creds.json already exists
     if (fs.existsSync(path.join(authFolder, 'creds.json'))) {
         console.log('✅ Session දැනටමත් තියනවා');
         return true;
@@ -131,30 +123,34 @@ async function downloadSession() {
     try {
         let sessionUrl = config.SESSION_ID.trim();
 
-        // Remove any "APEX~" or similar prefixes
         sessionUrl = sessionUrl.replace(/^APEX~/i, '');
         sessionUrl = sessionUrl.replace(/^apex-md~/i, '');
         sessionUrl = sessionUrl.replace(/^apex~/i, '');
 
-        // If it's not a full URL, make it one
         if (!sessionUrl.includes('mega.nz')) {
             sessionUrl = `https://mega.nz/file/${sessionUrl}`;
         }
 
         console.log('🔗 Mega File Code:', sessionUrl.split('/file/')[1] || sessionUrl);
 
-        // Download from Mega
         const file = File.fromURL(sessionUrl);
         await file.loadAttributes();
         
-        const data = await new Promise((resolve, reject) => {
+        // Add timeout
+        const downloadPromise = new Promise((resolve, reject) => {
+            const timeout = setTimeout(() => {
+                reject(new Error('Download timeout - 60 seconds exceeded'));
+            }, 60000);
+
             file.download((err, data) => {
+                clearTimeout(timeout);
                 if (err) reject(err);
                 else resolve(data);
             });
         });
 
-        // Save to auth folder
+        const data = await downloadPromise;
+
         if (!fs.existsSync(authFolder)) {
             fs.mkdirSync(authFolder, { recursive: true });
         }
@@ -166,349 +162,329 @@ async function downloadSession() {
     } catch (error) {
         console.log('❌ Mega Session Download Failed:', error.message);
         console.log('💡 Tip: Mega link එක හරිද බලන්න');
-        return false;
+        throw error; // Let error handler catch this
     }
-}
+});
 
 /**
- * Start bot connection
+ * Start bot connection with error handling
  */
 async function startBot() {
     console.log('');
     console.log('╔═══════════════════════════════════════════╗');
     console.log('║    🚀 APEX-MD V2 ENHANCED Starting...   ║');
+    console.log('║    🛡️  Advanced Error Handler Active     ║');
     console.log('╚═══════════════════════════════════════════╝');
     console.log('');
 
-    // Download session from Mega if needed
-    if (config.SESSION_ID) {
-        await downloadSession();
-    }
+    let conn = null;
 
-    // Connect to database
-    if (config.MONGODB) {
-        await connectDB();
-    }
-
-    // Load plugins
-    loadPlugins();
-
-    const { state, saveCreds } = await useMultiFileAuthState(authFolder);
-    const { version } = await fetchLatestBaileysVersion();
-
-    const conn = makeWASocket({
-        version,
-        logger: pino({ level: 'silent' }),
-        printQRInTerminal: config.USE_PAIRING_CODE === 'false',
-        browser: Browsers.ubuntu('APEX-MD'),
-        auth: state,
-        getMessage: async (key) => {
-            if (store) {
-                const msg = await store.loadMessage(key.remoteJid, key.id);
-                return msg?.message || undefined;
-            }
-            return { conversation: 'APEX-MD' };
-        }
-    });
-
-    // Pairing code support
-    if (config.USE_PAIRING_CODE === 'true' && !conn.authState.creds.registered) {
-        if (!config.PHONE_NUMBER) {
-            console.log('⚠️  PHONE_NUMBER නැහැ! config.env එකේ add කරන්න.');
-            process.exit(0);
+    try {
+        // Download session
+        if (config.SESSION_ID) {
+            await downloadSession();
         }
 
-        setTimeout(async () => {
-            const code = await conn.requestPairingCode(config.PHONE_NUMBER);
-            console.log('');
-            console.log('╔═══════════════════════════════════════════╗');
-            console.log(`║    Pairing Code: ${code}                ║`);
-            console.log('╚═══════════════════════════════════════════╝');
-            console.log('');
-            console.log('📱 WhatsApp > Settings > Linked Devices > Link a Device');
-            console.log('📱 "Link with phone number instead" option එක select කරන්න');
-            console.log(`📱 Code එක enter කරන්න: ${code}`);
-            console.log('');
-        }, 3000);
-    }
-
-    // Bind store
-    store?.bind(conn.ev);
-
-    // Save credentials
-    conn.ev.on('creds.update', saveCreds);
-
-    // Connection update
-    conn.ev.on('connection.update', async (update) => {
-        const { connection, lastDisconnect, qr } = update;
-
-        // QR code
-        if (qr) {
-            console.log('📱 QR Code:');
-            qrcode.generate(qr, { small: true });
+        // Connect to database
+        if (config.MONGODB) {
+            await connectDB();
         }
 
-        // Connection closed
-        if (connection === 'close') {
-            const reason = lastDisconnect?.error?.output?.statusCode;
-            
-            console.log('');
-            console.log('❌ Connection Closed. Reason:', reason);
-            
-            // Logged out
-            if (reason === DisconnectReason.loggedOut) {
-                console.log('⚠️  Bot logged out. ලොග්අවුට් වුණා. Auth folder මකන්න...');
-                if (fs.existsSync(authFolder)) {
-                    fs.rmSync(authFolder, { recursive: true, force: true });
+        // Load plugins
+        loadPlugins();
+
+        const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+        const { version } = await fetchLatestBaileysVersion();
+
+        conn = makeWASocket({
+            version,
+            logger: pino({ level: 'silent' }),
+            printQRInTerminal: config.USE_PAIRING_CODE === 'false',
+            browser: Browsers.ubuntu('APEX-MD'),
+            auth: state,
+            getMessage: async (key) => {
+                if (store) {
+                    const msg = await store.loadMessage(key.remoteJid, key.id);
+                    return msg?.message || undefined;
                 }
+                return { conversation: 'APEX-MD' };
+            }
+        });
+
+        // 🔥 SETUP GLOBAL ERROR HANDLERS
+        setupGlobalErrorHandlers(conn);
+
+        // Pairing code support
+        if (config.USE_PAIRING_CODE === 'true' && !conn.authState.creds.registered) {
+            if (!config.PHONE_NUMBER) {
+                console.log('⚠️  PHONE_NUMBER නැහැ! config.env එකේ add කරන්න.');
                 process.exit(0);
             }
-            // Bad session
-            else if (reason === DisconnectReason.badSession) {
-                console.log('⚠️  Bad Session. Auth folder මකලා restart කරන්න...');
-                if (fs.existsSync(authFolder)) {
-                    fs.rmSync(authFolder, { recursive: true, force: true });
+
+            setTimeout(async () => {
+                try {
+                    const code = await conn.requestPairingCode(config.PHONE_NUMBER);
+                    console.log('');
+                    console.log('╔═══════════════════════════════════════════╗');
+                    console.log(`║    Pairing Code: ${code}                ║`);
+                    console.log('╚═══════════════════════════════════════════╝');
+                    console.log('');
+                } catch (e) {
+                    await sendErrorToOwner(conn, e, 'Pairing Code Generation');
                 }
+            }, 3000);
+        }
+
+        // Bind store
+        store?.bind(conn.ev);
+
+        // Save credentials
+        conn.ev.on('creds.update', saveCreds);
+
+        // Connection updates
+        conn.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect } = update;
+            
+            if (connection === 'open') {
+                console.log('✅ Bot connected වෙලා!');
+                
+                // 🔥 SEND STARTUP NOTIFICATION TO OWNER
+                await sendStartupNotification(conn);
             }
             
-            // Reconnect
-            console.log('🔄 Reconnecting in 5 seconds...');
-            setTimeout(() => startBot(), 5000);
-        }
-        // Connection open
-        else if (connection === 'open') {
-            console.log('');
-            console.log('╔═══════════════════════════════════════════╗');
-            console.log('║  ✅ APEX-MD V2 ENHANCED Connected!       ║');
-            console.log('╚═══════════════════════════════════════════╝');
-            console.log('');
-            console.log(`📱 Bot Number: ${conn.user.id.split(':')[0]}`);
-            console.log(`📦 Total Commands: ${handler.getCommands().length}`);
-            console.log(`🔧 Prefix: ${config.PREFIX}`);
-            console.log(`⚙️  Mode: ${config.MODE}`);
-            console.log(`🤖 Version: 2.0.0 Enhanced`);
-            console.log('');
-        }
-    });
-
-    // Group participants update (Welcome/Goodbye)
-    conn.ev.on('group-participants.update', async (update) => {
-        try {
-            const { id, participants, action } = update;
-            
-            // Get group settings from database
-            const group = await getGroup(id);
-            if (!group) return;
-
-            const groupMetadata = await conn.groupMetadata(id);
-            
-            for (let participant of participants) {
-                // Welcome message
-                if (action === 'add' && group.welcome) {
-                    let message = group.welcomeMessage || '👋 Welcome @user to @group!';
-                    message = message
-                        .replace('@user', `@${participant.split('@')[0]}`)
-                        .replace('@group', groupMetadata.subject)
-                        .replace('@desc', groupMetadata.desc || '');
-
-                    await conn.sendMessage(id, {
-                        text: message,
-                        mentions: [participant]
-                    });
-                } 
-                // Goodbye message
-                else if (action === 'remove' && group.goodbye) {
-                    let message = group.goodbyeMessage || '👋 Goodbye @user!';
-                    message = message
-                        .replace('@user', `@${participant.split('@')[0]}`)
-                        .replace('@group', groupMetadata.subject);
-
-                    await conn.sendMessage(id, {
-                        text: message,
-                        mentions: [participant]
-                    });
-                }
-            }
-        } catch (e) {
-            console.log('Group participants update error:', e);
-        }
-    });
-
-    // Messages handler
-    conn.ev.on('messages.upsert', async (chatUpdate) => {
-        try {
-            const mek = chatUpdate.messages[0];
-            if (!mek.message) return;
-            if (mek.key && mek.key.remoteJid === 'status@broadcast') return;
-
-            // Serialize message
-            const m = await serialize(conn, mek);
-            
-            // Auto read
-            if (config.AUTO_READ === 'true') {
-                await conn.readMessages([mek.key]);
-            }
-
-            // Get message body
-            const body = m.body || '';
-
-            // ============================================
-            // ANTILINK PROTECTION
-            // ============================================
-            if (m.isGroup) {
-                const group = await getGroup(m.from);
-                if (group?.antilink) {
-                    const linkPattern = /(https?:\/\/|www\.)[^\s]+/gi;
-                    const hasLink = linkPattern.test(body);
-                    
-                    if (hasLink) {
-                        const groupMetadata = await conn.groupMetadata(m.from);
-                        const participants = groupMetadata.participants;
-                        const userAdmin = participants.find(p => p.id === m.sender)?.admin;
-                        const botAdmin = participants.find(p => p.id === conn.user.id)?.admin;
-                        
-                        // Ignore if user is admin or owner
-                        if (!userAdmin && !config.isOwner(m.sender) && botAdmin) {
-                            // Delete message
-                            await conn.sendMessage(m.from, { delete: mek.key });
-                            
-                            // Take action based on settings
-                            if (group.antilinkAction === 'kick') {
-                                await conn.groupParticipantsUpdate(m.from, [m.sender], 'remove');
-                                await conn.sendMessage(m.from, {
-                                    text: `🚫 @${m.sender.split('@')[0]} link එකක් යැව්වා හින්දා kick කරන ලදී!`,
-                                    mentions: [m.sender]
-                                });
-                            } else if (group.antilinkAction === 'warn') {
-                                await addWarning(m.sender, m.from, 'Sent a link', conn.user.id);
-                                const warnings = await getWarnings(m.sender, m.from);
-                                
-                                if (warnings.length >= 3) {
-                                    await conn.groupParticipantsUpdate(m.from, [m.sender], 'remove');
-                                    await clearWarnings(m.sender, m.from);
-                                    await conn.sendMessage(m.from, {
-                                        text: `🚫 @${m.sender.split('@')[0]} warnings 3ක් හින්දා kick කරන ලදී!`,
-                                        mentions: [m.sender]
-                                    });
-                                } else {
-                                    await conn.sendMessage(m.from, {
-                                        text: `⚠️ @${m.sender.split('@')[0]} warned! Links යවන්න එපා!\nWarnings: ${warnings.length}/3`,
-                                        mentions: [m.sender]
-                                    });
-                                }
-                            } else {
-                                // Just delete
-                                await conn.sendMessage(m.from, {
-                                    text: `❌ @${m.sender.split('@')[0]} links යවන්න බැහැ!`,
-                                    mentions: [m.sender]
-                                });
-                            }
-                            
-                            return; // Stop processing
-                        }
+            if (connection === 'close') {
+                const shouldReconnect = lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                console.log('Connection closed:', lastDisconnect?.error, 'Reconnecting:', shouldReconnect);
+                
+                if (shouldReconnect) {
+                    setTimeout(() => startBot(), 3000);
+                } else {
+                    // Logged out - send notification
+                    try {
+                        await sendErrorToOwner(conn, 
+                            new Error('Bot logged out from WhatsApp'), 
+                            'Connection - Logged Out'
+                        );
+                    } catch (e) {
+                        console.log('Failed to send logout notification');
                     }
                 }
             }
+        });
 
-            // ============================================
-            // COMMAND PROCESSING
-            // ============================================
-            const prefix = config.PREFIX;
-            
-            if (!body.startsWith(prefix)) return;
+        // Messages handler with comprehensive error handling
+        conn.ev.on('messages.upsert', async ({ messages }) => {
+            try {
+                const mek = messages[0];
+                if (!mek.message) return;
 
-            // Get command name
-            const args = body.slice(prefix.length).trim().split(/ +/);
-            const cmdName = args[0].toLowerCase();
-            const text = args.slice(1).join(' ');
+                const m = await serialize(mek, conn);
+                const body = m.body;
 
-            // Find command
-            const cmd = handler.findCommand(cmdName);
-            if (!cmd) return;
+                // Auto read
+                if (config.AUTO_READ === 'true') {
+                    await conn.readMessages([mek.key]);
+                }
 
-            // Check if user is banned
-            const user = await getUser(m.sender);
-            if (user?.banned) {
-                if (user.banExpiry && user.banExpiry < new Date()) {
-                    // Ban expired, unban
-                    await updateUser(m.sender, { banned: false, banExpiry: null });
-                } else {
+                // Status auto read/react
+                if (m.from === 'status@broadcast') {
+                    if (config.AUTO_STATUS_READ === 'true') {
+                        await conn.readMessages([mek.key]);
+                    }
+                    return;
+                }
+
+                // Ignore own messages
+                if (m.sender === conn.user.id) return;
+
+                // Auto typing/recording
+                if (config.AUTO_TYPING === 'true') {
+                    await conn.sendPresenceUpdate('composing', m.from);
+                }
+                if (config.AUTO_RECORDING === 'true') {
+                    await conn.sendPresenceUpdate('recording', m.from);
+                }
+
+                // Antilink protection (with error handling)
+                if (m.isGroup && body) {
+                    try {
+                        const group = await getGroup(m.from);
+                        if (group?.antilink) {
+                            const linkRegex = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|([a-zA-Z0-9-]+\.(com|net|org|io|co|me|app|dev|xyz|info|tech))/gi;
+                            const hasLink = linkRegex.test(body);
+
+                            if (hasLink) {
+                                const isAdmin = m.isAdmin;
+                                const isBotAdmin = m.isBotAdmin;
+
+                                if (!isAdmin && isBotAdmin) {
+                                    await conn.sendMessage(m.from, { delete: mek.key });
+
+                                    if (group.antilinkAction === 'kick') {
+                                        await conn.groupParticipantsUpdate(m.from, [m.sender], 'remove');
+                                        await conn.sendMessage(m.from, {
+                                            text: `🚫 @${m.sender.split('@')[0]} link එකක් යැව්වා හින්දා kick කරන ලදී!`,
+                                            mentions: [m.sender]
+                                        });
+                                    } else if (group.antilinkAction === 'warn') {
+                                        await addWarning(m.sender, m.from, 'Sent a link', conn.user.id);
+                                        const warnings = await getWarnings(m.sender, m.from);
+                                        
+                                        if (warnings.length >= 3) {
+                                            await conn.groupParticipantsUpdate(m.from, [m.sender], 'remove');
+                                            await clearWarnings(m.sender, m.from);
+                                            await conn.sendMessage(m.from, {
+                                                text: `🚫 @${m.sender.split('@')[0]} warnings 3ක් හින්දා kick කරන ලදී!`,
+                                                mentions: [m.sender]
+                                            });
+                                        } else {
+                                            await conn.sendMessage(m.from, {
+                                                text: `⚠️ @${m.sender.split('@')[0]} warned! Links යවන්න එපා!\nWarnings: ${warnings.length}/3`,
+                                                mentions: [m.sender]
+                                            });
+                                        }
+                                    } else {
+                                        await conn.sendMessage(m.from, {
+                                            text: `❌ @${m.sender.split('@')[0]} links යවන්න බැහැ!`,
+                                            mentions: [m.sender]
+                                        });
+                                    }
+                                    
+                                    return;
+                                }
+                            }
+                        }
+                    } catch (e) {
+                        console.log('Antilink error:', e.message);
+                        await sendErrorToOwner(conn, e, 'Antilink Feature');
+                    }
+                }
+
+                // Command processing with error handling
+                const prefix = config.PREFIX;
+                
+                if (!body.startsWith(prefix)) return;
+
+                const args = body.slice(prefix.length).trim().split(/ +/);
+                const cmdName = args[0].toLowerCase();
+                const text = args.slice(1).join(' ');
+
+                const cmd = handler.findCommand(cmdName);
+                if (!cmd) return;
+
+                // Check if user is banned
+                try {
+                    const user = await getUser(m.sender);
+                    if (user?.banned) {
+                        if (user.banExpiry && user.banExpiry < new Date()) {
+                            await updateUser(m.sender, { banned: false, banExpiry: null });
+                        } else {
+                            return await conn.sendMessage(m.from, {
+                                text: '❌ ඔබ bot එක use කරන්න ban කරලා තියෙනවා!'
+                            }, { quoted: mek });
+                        }
+                    }
+                } catch (e) {
+                    console.log('User ban check error:', e.message);
+                }
+
+                // Check permissions
+                const isOwner = config.isOwner(m.sender);
+                
+                if (cmd.isOwner && !isOwner) {
                     return await conn.sendMessage(m.from, {
-                        text: '❌ ඔබ bot එක use කරන්න ban කරලා තියෙනවා!'
+                        text: '❌ මේ command එක owner විතරයි use කරන්න පුළුවන්!'
                     }, { quoted: mek });
                 }
-            }
 
-            // Check permissions
-            const isOwner = config.isOwner(m.sender);
-            
-            // Owner only commands
-            if (cmd.isOwner && !isOwner) {
-                return await conn.sendMessage(m.from, {
-                    text: '❌ මේ command එක owner විතරයි use කරන්න පුළුවන්!'
-                }, { quoted: mek });
-            }
-
-            // Group only commands
-            if (cmd.isGroup && !m.isGroup) {
-                return await conn.sendMessage(m.from, {
-                    text: '❌ මේ command එක groups වලයි use කරන්න පුළුවන්!'
-                }, { quoted: mek });
-            }
-
-            // Private only commands
-            if (cmd.isPrivate && m.isGroup) {
-                return await conn.sendMessage(m.from, {
-                    text: '❌ මේ command එක inbox එකේ විතරයි use කරන්න පුළුවන්!'
-                }, { quoted: mek });
-            }
-
-            // React if configured
-            if (cmd.react) {
-                await conn.sendMessage(m.from, {
-                    react: { text: cmd.react, key: mek.key }
-                });
-            }
-
-            // Debug log
-            if (config.DEBUG === 'true') {
-                console.log(`[CMD] ${m.sender.split('@')[0]}: ${body}`);
-            }
-
-            // Execute command
-            const extra = {
-                conn,
-                m,
-                text,
-                args,
-                isOwner,
-                reply: async (text) => {
-                    return await conn.sendMessage(m.from, { text }, { quoted: mek });
-                },
-                react: async (emoji) => {
+                if (cmd.isGroup && !m.isGroup) {
                     return await conn.sendMessage(m.from, {
-                        react: { text: emoji, key: mek.key }
+                        text: '❌ මේ command එක groups වලයි use කරන්න පුළුවන්!'
+                    }, { quoted: mek });
+                }
+
+                if (cmd.isPrivate && m.isGroup) {
+                    return await conn.sendMessage(m.from, {
+                        text: '❌ මේ command එක inbox එකේ විතරයි use කරන්න පුළුවන්!'
+                    }, { quoted: mek });
+                }
+
+                if (cmd.react) {
+                    await conn.sendMessage(m.from, {
+                        react: { text: cmd.react, key: mek.key }
                     });
                 }
-            };
 
-            await cmd.function(conn, mek, m, extra);
+                if (config.DEBUG === 'true') {
+                    console.log(`[CMD] ${m.sender.split('@')[0]}: ${body}`);
+                }
 
-            // Log command usage to database
-            if (config.MONGODB) {
-                const { logCommand } = require('./lib/database');
-                await logCommand(cmd.pattern, m.sender, m.isGroup ? m.from : null);
+                // Execute command with error handling
+                try {
+                    const extra = {
+                        conn,
+                        m,
+                        text,
+                        args,
+                        isOwner,
+                        reply: async (text) => {
+                            return await conn.sendMessage(m.from, { text }, { quoted: mek });
+                        },
+                        react: async (emoji) => {
+                            return await conn.sendMessage(m.from, {
+                                react: { text: emoji, key: mek.key }
+                            });
+                        }
+                    };
+
+                    await cmd.function(conn, mek, m, extra);
+
+                    // Log command usage
+                    if (config.MONGODB) {
+                        const { logCommand } = require('./lib/database');
+                        await logCommand(cmd.pattern, m.sender, m.isGroup ? m.from : null);
+                    }
+
+                } catch (cmdError) {
+                    console.log(`❌ Command Error [${cmd.pattern}]:`, cmdError.message);
+                    
+                    // 🔥 SEND ERROR TO OWNER
+                    await sendErrorToOwner(conn, cmdError, `Command: ${cmd.pattern}`);
+                    
+                    // Notify user
+                    await conn.sendMessage(m.from, {
+                        text: `❌ Command එක run කරද්දී error එකක්!\n\n_Error එක owner ට auto ම send කරලා._`
+                    }, { quoted: mek });
+                }
+
+            } catch (messageError) {
+                console.log('❌ Message Handler Error:', messageError.message);
+                
+                // 🔥 SEND ERROR TO OWNER
+                if (conn) {
+                    await sendErrorToOwner(conn, messageError, 'Message Handler');
+                }
+                
+                if (config.DEBUG === 'true') {
+                    console.log(messageError);
+                }
             }
+        });
 
-        } catch (e) {
-            console.log('❌ Message Handler Error:', e.message);
-            if (config.DEBUG === 'true') {
-                console.log(e);
-            }
+        return conn;
+
+    } catch (startupError) {
+        console.log('❌ Bot Startup Error:', startupError.message);
+        
+        // 🔥 TRY TO SEND ERROR TO OWNER (if conn available)
+        if (conn) {
+            await sendErrorToOwner(conn, startupError, 'Bot Startup');
         }
-    });
-
-    return conn;
+        
+        // Retry after 10 seconds
+        console.log('⏳ Retrying in 10 seconds...');
+        setTimeout(() => startBot(), 10000);
+    }
 }
 
 // Express routes
@@ -533,35 +509,17 @@ app.get('/', (req, res) => {
                     }
                     h1 { font-size: 3em; margin-bottom: 20px; }
                     .status { color: #4ade80; font-weight: bold; font-size: 1.5em; }
-                    .version { margin-top: 20px; opacity: 0.8; }
-                    .features { margin-top: 30px; text-align: left; }
-                    .features li { margin: 10px 0; }
+                    .error-handler { color: #fbbf24; margin-top: 20px; }
                 </style>
             </head>
             <body>
                 <div class="container">
                     <h1>✅ APEX-MD V2 ENHANCED</h1>
                     <p class="status">Status: Active & Running</p>
-                    <p class="version">Version: 2.0.0 Enhanced Edition</p>
-                    
-                    <div class="features">
-                        <h2>🚀 Features:</h2>
-                        <ul>
-                            <li>📥 Download System (YouTube, TikTok)</li>
-                            <li>🤖 AI Integration (Gemini, ChatGPT)</li>
-                            <li>👥 Complete Group Management</li>
-                            <li>🛡️ Antilink Protection</li>
-                            <li>👋 Welcome/Goodbye Messages</li>
-                            <li>👑 Owner Control Panel</li>
-                            <li>🛠️ Utility Commands</li>
-                            <li>💾 Database Integration</li>
-                            <li>📊 44+ Commands Total</li>
-                        </ul>
-                    </div>
-                    
+                    <p class="error-handler">🛡️ Advanced Error Handler: ACTIVE</p>
                     <p style="margin-top: 30px;">
                         Created with ❤️ by Shehan Vimukthi<br>
-                        Enhanced with AI
+                        Enhanced with AI + Auto Error Detection
                     </p>
                 </div>
             </body>
@@ -574,7 +532,8 @@ app.get('/health', (req, res) => {
         status: 'ok',
         uptime: process.uptime(),
         version: '2.0.0',
-        enhanced: true
+        enhanced: true,
+        errorHandler: 'active'
     });
 });
 
@@ -582,21 +541,6 @@ app.get('/health', (req, res) => {
 app.listen(PORT, () => {
     console.log(`🌐 Web Server: http://localhost:${PORT}`);
     startBot();
-});
-
-// Error handlers
-process.on('uncaughtException', (err) => {
-    console.log('❌ Uncaught Exception:', err.message);
-    if (config.DEBUG === 'true') {
-        console.log(err);
-    }
-});
-
-process.on('unhandledRejection', (err) => {
-    console.log('❌ Unhandled Rejection:', err.message);
-    if (config.DEBUG === 'true') {
-        console.log(err);
-    }
 });
 
 // Graceful shutdown
