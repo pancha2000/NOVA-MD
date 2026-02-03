@@ -2,9 +2,11 @@
  * ╔═══════════════════════════════════════════════════════════╗
  * ║   ERROR MANAGEMENT COMMANDS - Owner Only                  ║
  * ║   View error logs, stats, and manage error history        ║
+ * ║   FIXED: addCommand now properly exported                 ║
  * ╚═══════════════════════════════════════════════════════════╝
  */
 
+// ✅ FIXED: addCommand is now exported from lib/commands
 const { addCommand } = require('../lib/commands');
 const { getErrorStats, clearErrorHistory, DEVELOPER_INFO } = require('../lib/errorHandler');
 const fs = require('fs');
