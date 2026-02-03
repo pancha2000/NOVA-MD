@@ -1,0 +1,265 @@
+{
+  "bot-name": "APEX-MD V2",
+  "description": "APEX-MD V2 Enhanced — Advanced WhatsApp Bot with AI, Group Management, Downloads, and Auto Error Handling. Built with Baileys & Gemini AI.",
+  "logo": "https://i.imgur.com/VlZ2Y0l.jpeg",
+  "keywords": ["whatsapp", "bot", "baileys", "apex", "ai", "gemini", "group", "download"],
+  "documentation-link": "https://github.com/pancha2000",
+  "owner-verification": "panchareal486@gmail.com",
+  "env": {
+    "SESSION_ID": {
+      "description": "Mega.nz session file link or code (e.g. https://mega.nz/file/xxxxx)",
+      "value": "",
+      "required": true
+    },
+    "PREFIX": {
+      "description": "Bot command prefix (e.g. . ! @ #)",
+      "value": ".",
+      "required": true
+    },
+    "PHONE_NUMBER": {
+      "description": "WhatsApp phone number for pairing code (e.g. 94701391585)",
+      "value": "",
+      "required": true
+    },
+    "USE_PAIRING_CODE": {
+      "description": "Use pairing code instead of QR code to connect (true / false)",
+      "value": "true",
+      "required": true
+    },
+    "MONGODB": {
+      "description": "MongoDB connection URI for user/group/warning database (e.g. mongodb+srv://user:pass@cluster.mongodb.net/dbname)",
+      "value": "",
+      "required": true
+    },
+    "OWNER_NAME": {
+      "description": "Display name of the bot owner",
+      "value": "Owner",
+      "required": false
+    },
+    "OWNER_NUMBER": {
+      "description": "Owner WhatsApp number (e.g. 94701391585). Used for startup & error notifications",
+      "value": "",
+      "required": true
+    },
+    "SUDO": {
+      "description": "Comma-separated list of owner/sudo WhatsApp numbers (e.g. 94701391585,94771189323)",
+      "value": "",
+      "required": true
+    },
+    "MODE": {
+      "description": "Bot access mode — public (everyone), private (owner only), inbox (DM only), groups (groups only)",
+      "value": "public",
+      "required": false
+    },
+    "GEMINI_API": {
+      "description": "Google Gemini API key for .ai command & auto error AI solutions (get from https://makersuite.google.com/app/apikey)",
+      "value": "",
+      "required": false
+    },
+    "OPENAI_API": {
+      "description": "OpenAI API key for .chatgpt command",
+      "value": "",
+      "required": false
+    },
+    "ALIVE_IMG": {
+      "description": "Image URL shown when .alive command is used",
+      "value": "https://i.imgur.com/VlZ2Y0l.jpeg",
+      "required": false
+    },
+    "ALIVE_MSG": {
+      "description": "Text shown when .alive command is used",
+      "value": "✅ *APEX-MD IS ONLINE*",
+      "required": false
+    },
+    "MENU_IMG": {
+      "description": "Image URL shown in the .menu command",
+      "value": "https://i.imgur.com/VlZ2Y0l.jpeg",
+      "required": false
+    },
+    "AUTO_READ": {
+      "description": "Auto mark incoming messages as read (true / false)",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_STATUS_READ": {
+      "description": "Auto read other people's WhatsApp statuses (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "AUTO_TYPING": {
+      "description": "Show typing indicator before replying (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "AUTO_RECORDING": {
+      "description": "Show recording indicator before replying (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "AUTO_BIO": {
+      "description": "Auto update bot bio/status (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "ANTILINK_ENABLED": {
+      "description": "Default antilink protection state for new groups (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "ANTILINK_ACTION": {
+      "description": "Default action when a link is detected — kick, warn, or delete",
+      "value": "kick",
+      "required": false
+    },
+    "WELCOME_ENABLED": {
+      "description": "Default welcome message state for new groups (true / false)",
+      "value": "true",
+      "required": false
+    },
+    "GOODBYE_ENABLED": {
+      "description": "Default goodbye message state for new groups (true / false)",
+      "value": "true",
+      "required": false
+    },
+    "AUTO_STICKER": {
+      "description": "Auto convert images to stickers (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "MAX_DOWNLOAD_SIZE": {
+      "description": "Maximum allowed download size in MB",
+      "value": "500",
+      "required": false
+    },
+    "YOUTUBE_QUALITY": {
+      "description": "Default YouTube video download quality (e.g. 360p, 720p)",
+      "value": "360p",
+      "required": false
+    },
+    "AUDIO_QUALITY": {
+      "description": "Default audio download quality in kbps (e.g. 128, 192, 320)",
+      "value": "128",
+      "required": false
+    },
+    "BLOCK_SPAM": {
+      "description": "Enable spam blocking (true / false)",
+      "value": "true",
+      "required": false
+    },
+    "SPAM_COUNT": {
+      "description": "Number of messages in the time window before a user is flagged as spam",
+      "value": "5",
+      "required": false
+    },
+    "BAN_TIME": {
+      "description": "Auto-ban duration in seconds when spam is detected",
+      "value": "3600",
+      "required": false
+    },
+    "ANTI_CALL": {
+      "description": "Block incoming calls to the bot (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "ANTI_BOT": {
+      "description": "Block other bots from interacting with this bot (true / false)",
+      "value": "true",
+      "required": false
+    },
+    "RATE_LIMIT_ENABLED": {
+      "description": "Enable command rate limiting (true / false)",
+      "value": "true",
+      "required": false
+    },
+    "RATE_LIMIT_MAX": {
+      "description": "Maximum commands allowed per user within the rate limit window",
+      "value": "10",
+      "required": false
+    },
+    "RATE_LIMIT_WINDOW": {
+      "description": "Rate limit time window in milliseconds (e.g. 60000 = 1 minute)",
+      "value": "60000",
+      "required": false
+    },
+    "PREMIUM_MODE": {
+      "description": "Enable premium user features (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "ECONOMY_ENABLED": {
+      "description": "Enable economy/coins system (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "LEVEL_SYSTEM": {
+      "description": "Enable XP & level system (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "TIME_ZONE": {
+      "description": "Server timezone for timestamps (e.g. Asia/Colombo, Asia/Kolkata)",
+      "value": "Asia/Colombo",
+      "required": false
+    },
+    "DEBUG": {
+      "description": "Enable debug logging in terminal (true / false)",
+      "value": "false",
+      "required": false
+    },
+    "LOGS": {
+      "description": "Enable general console logging (true / false)",
+      "value": "true",
+      "required": false
+    },
+    "PORT": {
+      "description": "HTTP server port (used by health-check endpoint)",
+      "value": "8000",
+      "required": false
+    },
+    "YOUTUBE_API": {
+      "description": "YouTube download proxy/API endpoint URL",
+      "value": "",
+      "required": false
+    },
+    "SPOTIFY_API": {
+      "description": "Spotify API endpoint URL",
+      "value": "",
+      "required": false
+    },
+    "WEATHER_API": {
+      "description": "Weather API key (bot uses wttr.in by default, so this is optional)",
+      "value": "",
+      "required": false
+    },
+    "NEWS_API": {
+      "description": "News API key",
+      "value": "",
+      "required": false
+    },
+    "CURRENCY_API": {
+      "description": "Currency conversion API key",
+      "value": "",
+      "required": false
+    },
+    "TRANSLATE_API": {
+      "description": "Translation API key (bot uses translate-google by default)",
+      "value": "",
+      "required": false
+    },
+    "REMOVE_BG_API": {
+      "description": "Remove.bg API key for background removal",
+      "value": "",
+      "required": false
+    },
+    "IMGBB_API": {
+      "description": "ImgBB API key for image hosting",
+      "value": "",
+      "required": false
+    },
+    "HUGGINGFACE_API": {
+      "description": "Hugging Face API key for AI model access",
+      "value": "",
+      "required": false
+    }
+  }
+}
