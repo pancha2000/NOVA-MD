@@ -1,11 +1,9 @@
 /**
- * ╔═══════════════════════════════════════════════════════════╗
- * ║   APEX-MD V2 ENHANCED - WhatsApp Bot                      ║
- * ║   Created by: Shehan Vimukthi                             ║
- * ║   Enhanced with AI Features + Speed Mode V2              ║
- * ║   ⚡ Pure Optimization - NO Feature Loss                 ║
- * ║   🔧 FIXED - Error handling improved                     ║
- * ╚═══════════════════════════════════════════════════════════╝
+ * ╔═══════════════════════════════════════════╗
+ * ║   APEX-MD V2 ENHANCED - WhatsApp Bot      ║
+ * ║     Created by: Shehan Vimukthi           ║
+ * ║     Enhanced with AI Features             ║
+ * ╚═══════════════════════════════════════════╝
  */
 
 const Baileys = require('@whiskeysockets/baileys');
@@ -32,27 +30,6 @@ const config = require('./config');
 const { connectDB, getGroup, updateGroup, getUser, addWarning, getWarnings, clearWarnings } = require('./lib/database');
 const { handler } = require('./lib/commands');
 const { serialize } = require('./lib/functions');
-
-// ════════════════════════════════════════════════════════════════════
-// SPEED MODE V2 - Initialize (NEW)
-// ════════════════════════════════════════════════════════════════════
-const SpeedModeV2 = require('./speedMode_v2');
-
-// Initialize Speed Mode V2
-global.speedMode = new SpeedModeV2({
-    enabled: config.SPEED_MODE_ENABLED === 'true',
-    level: config.SPEED_MODE_LEVEL || 'balanced'
-});
-
-// Auto-enable if configured
-if (config.SPEED_MODE_ENABLED === 'true') {
-    global.speedMode.enable(config.SPEED_MODE_LEVEL || 'balanced');
-    console.log('');
-    global.speedMode.showStatus();
-    console.log('');
-}
-
-// ════════════════════════════════════════════════════════════════════
 
 // Express server
 const app = express();
@@ -258,200 +235,178 @@ async function startBot() {
     // Bind store
     store?.bind(conn.ev);
 
-    // Connection status
+    // Save credentials
+    conn.ev.on('creds.update', saveCreds);
+
+    // Connection update
     conn.ev.on('connection.update', async (update) => {
         const { connection, lastDisconnect, qr } = update;
 
+        // QR code
         if (qr) {
+            console.log('📱 QR Code:');
             qrcode.generate(qr, { small: true });
         }
 
+        // Connection closed
         if (connection === 'close') {
-            let reason = new Boom(lastDisconnect?.error)?.output.statusCode;
-            if (reason === DisconnectReason.badSession) {
-                console.log('❌ Bad Session File, Please Scan Again');
-                fs.unlinkSync(path.join(authFolder, 'creds.json'));
-            } else if (reason === DisconnectReason.connectionClosed) {
-                console.log('⚠️  Connection closed, Reconecting...');
-                startBot();
-            } else if (reason === DisconnectReason.connectionLost) {
-                console.log('⚠️  Connection lost from server, Reconecting...');
-                startBot();
-            } else if (reason === DisconnectReason.connectionReplaced) {
-                console.log('❌ Connection Replaced, Another new connection made, Close current one first');
-            } else if (reason === DisconnectReason.loggedOut) {
-                console.log('👋 Device Logged Out, Please Scan Again!');
-                fs.unlinkSync(path.join(authFolder, 'creds.json'));
-            } else if (reason === DisconnectReason.restartRequired) {
-                console.log('🔄 Restart Required, Restarting...');
-                startBot();
-            } else if (reason === DisconnectReason.timedOut) {
-                console.log('⏱️  Connection TimedOut, Reconecting...');
-                startBot();
-            } else {
-                startBot();
+            const reason = lastDisconnect?.error?.output?.statusCode;
+            
+            console.log('');
+            console.log('❌ Connection Closed. Reason:', reason);
+            
+            // Logged out
+            if (reason === DisconnectReason.loggedOut) {
+                console.log('⚠️  Bot logged out. ලොග්අවුට් වුණා. Auth folder මකන්න...');
+                if (fs.existsSync(authFolder)) {
+                    fs.rmSync(authFolder, { recursive: true, force: true });
+                }
+                process.exit(0);
             }
+            // Bad session
+            else if (reason === DisconnectReason.badSession) {
+                console.log('⚠️  Bad Session. Auth folder මකලා restart කරන්න...');
+                if (fs.existsSync(authFolder)) {
+                    fs.rmSync(authFolder, { recursive: true, force: true });
+                }
+            }
+            
+            // Reconnect
+            console.log('🔄 Reconnecting in 5 seconds...');
+            setTimeout(() => startBot(), 5000);
         }
-
-        if (connection === 'connecting') {
-            console.log('🔌 Connecting...');
-        }
-
-        if (connection === 'open') {
+        // Connection open
+        else if (connection === 'open') {
             console.log('');
             console.log('╔═══════════════════════════════════════════╗');
-            console.log('║      ✅ BOT CONNECTED SUCCESSFULLY        ║');
+            console.log('║  ✅ APEX-MD V2 ENHANCED Connected!       ║');
             console.log('╚═══════════════════════════════════════════╝');
             console.log('');
-            console.log(`👤 Bot Name: ${conn.user.name}`);
             console.log(`📱 Bot Number: ${conn.user.id.split(':')[0]}`);
+            console.log(`📦 Total Commands: ${handler.getCommands().length}`);
+            console.log(`🔧 Prefix: ${config.PREFIX}`);
+            console.log(`⚙️  Mode: ${config.MODE}`);
+            console.log(`🤖 Version: 2.0.0 Enhanced`);
             console.log('');
         }
     });
 
-    // Creds update
-    conn.ev.on('creds.update', saveCreds);
-
-    // ════════════════════════════════════════════════════════════════════
-    // MESSAGE HANDLER WITH SPEED MODE V2 SUPPORT (FIXED)
-    // ════════════════════════════════════════════════════════════════════
-    conn.ev.on('messages.upsert', async (m) => {
-        // Check if message exists
-        if (!m.messages) return;
-
+    // Group participants update (Welcome/Goodbye)
+    conn.ev.on('group-participants.update', async (update) => {
         try {
-            const mek = m.messages[0];
+            const { id, participants, action } = update;
+            
+            // Get group settings from database
+            const group = await getGroup(id);
+            if (!group) return;
 
+            const groupMetadata = await conn.groupMetadata(id);
+            
+            for (let participant of participants) {
+                // Welcome message
+                if (action === 'add' && group.welcome) {
+                    let message = group.welcomeMessage || '👋 Welcome @user to @group!';
+                    message = message
+                        .replace('@user', `@${participant.split('@')[0]}`)
+                        .replace('@group', groupMetadata.subject)
+                        .replace('@desc', groupMetadata.desc || '');
+
+                    await conn.sendMessage(id, {
+                        text: message,
+                        mentions: [participant]
+                    });
+                } 
+                // Goodbye message
+                else if (action === 'remove' && group.goodbye) {
+                    let message = group.goodbyeMessage || '👋 Goodbye @user!';
+                    message = message
+                        .replace('@user', `@${participant.split('@')[0]}`)
+                        .replace('@group', groupMetadata.subject);
+
+                    await conn.sendMessage(id, {
+                        text: message,
+                        mentions: [participant]
+                    });
+                }
+            }
+        } catch (e) {
+            console.log('Group participants update error:', e);
+        }
+    });
+
+    // Messages handler
+    conn.ev.on('messages.upsert', async (chatUpdate) => {
+        try {
+            const mek = chatUpdate.messages[0];
             if (!mek.message) return;
+            if (mek.key && mek.key.remoteJid === 'status@broadcast') return;
 
             // Serialize message
-            const msg = serialize(mek);
-
-            // ════════════════════════════════════════════════════════════════════
-            // SAFETY CHECKS (FIXED)
-            // ════════════════════════════════════════════════════════════════════
-            if (!msg || !msg.from || !msg.sender) return;
-            // ════════════════════════════════════════════════════════════════════
+            const m = await serialize(conn, mek);
+            
+            // Auto read
+            if (config.AUTO_READ === 'true') {
+                await conn.readMessages([mek.key]);
+            }
 
             // Get message body
-            let body = msg.body;
-            const m_reply = mek.message.extendedTextMessage?.contextInfo?.quotedMessage;
-
-            // ════════════════════════════════════════════════════════════════════
-            // SPEED MODE V2 - Request Deduplication (NEW)
-            // ════════════════════════════════════════════════════════════════════
-            if (global.speedMode && global.speedMode.enabled) {
-                const requestKey = `${msg.sender}:${body}:${Date.now() % 1000}`;
-                if (global.speedMode.isDuplicate(requestKey)) {
-                    return; // Skip duplicate request
-                }
-            }
-            // ════════════════════════════════════════════════════════════════════
-
-            if (!body) {
-                body = msg.text || '';
-            }
-
-            // Auto read messages
-            if (config.AUTO_READ === 'true') {
-                try {
-                    conn.readMessages([mek.key]);
-                } catch (e) {}
-            }
-
-            // Auto status view
-            if (config.AUTO_STATUS_READ === 'true' && msg.isStatus) {
-                try {
-                    await conn.readMessages([mek.key]);
-                } catch (e) {}
-            }
-
-            // Check if group
-            const isGroup = msg.from && msg.from.endsWith('@g.us');
-            const sender = msg.from;
-            const m_sender = msg.sender;
-            const m_reply_obj = m_reply ? Baileys.proto.WebMessageInfo.fromObject({ message: { [Object.keys(m_reply)[0]]: m_reply[Object.keys(m_reply)[0]] } }) : null;
-
-            // Group management
-            if (isGroup) {
-                try {
-                    const groupMetadata = await conn.groupMetadata(msg.from);
-                    const participants = groupMetadata.participants;
-
-                    msg.isGroup = isGroup;
-                    msg.groupMetadata = groupMetadata;
-                    msg.groupMembers = participants;
-                    msg.isBotAdmin = !!participants.find(p => p.id === conn.user.jid && (p.admin === 'admin' || p.admin === 'superadmin'));
-                    msg.isAdmin = !!participants.find(p => p.id === m_sender && (p.admin === 'admin' || p.admin === 'superadmin'));
-                } catch (e) {
-                    msg.isGroup = false;
-                    console.log('⚠️ Group metadata error:', e.message);
-                }
-            } else {
-                msg.isGroup = false;
-            }
+            const body = m.body || '';
 
             // ============================================
-            // ANTILINK SYSTEM
+            // ANTILINK PROTECTION
             // ============================================
-            if (isGroup && config.ANTILINK_ENABLED === 'true') {
-                try {
-                    const group = await getGroup(msg.from);
+            if (m.isGroup) {
+                const group = await getGroup(m.from);
+                if (group?.antilink) {
+                    const linkPattern = /(https?:\/\/|www\.)[^\s]+/gi;
+                    const hasLink = linkPattern.test(body);
                     
-                    if (group && group.antilinkEnabled) {
-                        const linkPattern = /(https?:\/\/[^\s]+)|(www\.[^\s]+)|(wa\.me\/[^\s]+)|(.com|.org|.net|.co|.io)\/[^\s]+/gi;
+                    if (hasLink) {
+                        const groupMetadata = await conn.groupMetadata(m.from);
+                        const participants = groupMetadata.participants;
+                        const userAdmin = participants.find(p => p.id === m.sender)?.admin;
+                        const botAdmin = participants.find(p => p.id === conn.user.id)?.admin;
                         
-                        if (linkPattern.test(body)) {
-                            if (msg.isAdmin || msg.sender === msg.groupMetadata?.owner) {
-                                // Admin posted link - allow
-                            } else {
-                                // Delete message
-                                try {
-                                    await conn.sendMessage(msg.from, { delete: mek.key });
-                                } catch (e) {}
-
-                                // Take action
-                                if (group.antilinkAction === 'kick') {
-                                    try {
-                                        await conn.groupParticipantsUpdate(msg.from, [m_sender], 'remove');
-                                    } catch (e) {}
-                                    await conn.sendMessage(msg.from, {
-                                        text: `🚫 @${m_sender.split('@')[0]} link එකක් යැව්වා හින්දා kick කරන ලදී!`,
-                                        mentions: [m_sender]
+                        // Ignore if user is admin or owner
+                        if (!userAdmin && !config.isOwner(m.sender) && botAdmin) {
+                            // Delete message
+                            await conn.sendMessage(m.from, { delete: mek.key });
+                            
+                            // Take action based on settings
+                            if (group.antilinkAction === 'kick') {
+                                await conn.groupParticipantsUpdate(m.from, [m.sender], 'remove');
+                                await conn.sendMessage(m.from, {
+                                    text: `🚫 @${m.sender.split('@')[0]} link එකක් යැව්වා හින්දා kick කරන ලදී!`,
+                                    mentions: [m.sender]
+                                });
+                            } else if (group.antilinkAction === 'warn') {
+                                await addWarning(m.sender, m.from, 'Sent a link', conn.user.id);
+                                const warnings = await getWarnings(m.sender, m.from);
+                                
+                                if (warnings.length >= 3) {
+                                    await conn.groupParticipantsUpdate(m.from, [m.sender], 'remove');
+                                    await clearWarnings(m.sender, m.from);
+                                    await conn.sendMessage(m.from, {
+                                        text: `🚫 @${m.sender.split('@')[0]} warnings 3ක් හින්දා kick කරන ලදී!`,
+                                        mentions: [m.sender]
                                     });
-                                } else if (group.antilinkAction === 'warn') {
-                                    await addWarning(m_sender, msg.from, 'Sent a link', conn.user.id);
-                                    const warnings = await getWarnings(m_sender, msg.from);
-                                    
-                                    if (warnings.length >= 3) {
-                                        try {
-                                            await conn.groupParticipantsUpdate(msg.from, [m_sender], 'remove');
-                                        } catch (e) {}
-                                        await clearWarnings(m_sender, msg.from);
-                                        await conn.sendMessage(msg.from, {
-                                            text: `🚫 @${m_sender.split('@')[0]} warnings 3ක් හින්දා kick කරන ලදී!`,
-                                            mentions: [m_sender]
-                                        });
-                                    } else {
-                                        await conn.sendMessage(msg.from, {
-                                            text: `⚠️ @${m_sender.split('@')[0]} warned! Links යවන්න එපා!\nWarnings: ${warnings.length}/3`,
-                                            mentions: [m_sender]
-                                        });
-                                    }
                                 } else {
-                                    // Just delete
-                                    await conn.sendMessage(msg.from, {
-                                        text: `❌ @${m_sender.split('@')[0]} links යවන්න බැහැ!`,
-                                        mentions: [m_sender]
+                                    await conn.sendMessage(m.from, {
+                                        text: `⚠️ @${m.sender.split('@')[0]} warned! Links යවන්න එපා!\nWarnings: ${warnings.length}/3`,
+                                        mentions: [m.sender]
                                     });
                                 }
-                                
-                                return; // Stop processing
+                            } else {
+                                // Just delete
+                                await conn.sendMessage(m.from, {
+                                    text: `❌ @${m.sender.split('@')[0]} links යවන්න බැහැ!`,
+                                    mentions: [m.sender]
+                                });
                             }
+                            
+                            return; // Stop processing
                         }
                     }
-                } catch (e) {
-                    console.log('⚠️ Antilink error:', e.message);
                 }
             }
 
@@ -472,109 +427,77 @@ async function startBot() {
             if (!cmd) return;
 
             // Check if user is banned
-            try {
-                const user = await getUser(msg.sender);
-                if (user?.banned) {
-                    if (user.banExpiry && user.banExpiry < new Date()) {
-                        // Ban expired, unban
-                        await updateUser(msg.sender, { banned: false, banExpiry: null });
-                    } else {
-                        return await conn.sendMessage(msg.from, {
-                            text: '❌ ඔබ bot එක use කරන්න ban කරලා තියෙනවා!'
-                        }, { quoted: mek });
-                    }
+            const user = await getUser(m.sender);
+            if (user?.banned) {
+                if (user.banExpiry && user.banExpiry < new Date()) {
+                    // Ban expired, unban
+                    await updateUser(m.sender, { banned: false, banExpiry: null });
+                } else {
+                    return await conn.sendMessage(m.from, {
+                        text: '❌ ඔබ bot එක use කරන්න ban කරලා තියෙනවා!'
+                    }, { quoted: mek });
                 }
-            } catch (e) {}
+            }
 
             // Check permissions
-            const isOwner = config.isOwner(msg.sender);
+            const isOwner = config.isOwner(m.sender);
             
             // Owner only commands
             if (cmd.isOwner && !isOwner) {
-                return await conn.sendMessage(msg.from, {
+                return await conn.sendMessage(m.from, {
                     text: '❌ මේ command එක owner විතරයි use කරන්න පුළුවන්!'
                 }, { quoted: mek });
             }
 
             // Group only commands
-            if (cmd.isGroup && !msg.isGroup) {
-                return await conn.sendMessage(msg.from, {
+            if (cmd.isGroup && !m.isGroup) {
+                return await conn.sendMessage(m.from, {
                     text: '❌ මේ command එක groups වලයි use කරන්න පුළුවන්!'
                 }, { quoted: mek });
             }
 
             // Private only commands
-            if (cmd.isPrivate && msg.isGroup) {
-                return await conn.sendMessage(msg.from, {
+            if (cmd.isPrivate && m.isGroup) {
+                return await conn.sendMessage(m.from, {
                     text: '❌ මේ command එක inbox එකේ විතරයි use කරන්න පුළුවන්!'
                 }, { quoted: mek });
             }
 
             // React if configured
             if (cmd.react) {
-                try {
-                    await conn.sendMessage(msg.from, {
-                        react: { text: cmd.react, key: mek.key }
-                    });
-                } catch (e) {}
+                await conn.sendMessage(m.from, {
+                    react: { text: cmd.react, key: mek.key }
+                });
             }
 
             // Debug log
             if (config.DEBUG === 'true') {
-                console.log(`[CMD] ${msg.sender.split('@')[0]}: ${body}`);
+                console.log(`[CMD] ${m.sender.split('@')[0]}: ${body}`);
             }
-
-            // ════════════════════════════════════════════════════════════════════
-            // SPEED MODE V2 - Check Cache (NEW)
-            // ════════════════════════════════════════════════════════════════════
-            if (global.speedMode && global.speedMode.enabled) {
-                const cacheKey = `${cmdName}:${text}`;
-                const cachedResult = global.speedMode.getCachedCommand(cacheKey);
-                
-                if (cachedResult) {
-                    // Return cached result
-                    return await conn.sendMessage(msg.from, { text: cachedResult }, { quoted: mek });
-                }
-            }
-            // ════════════════════════════════════════════════════════════════════
 
             // Execute command
             const extra = {
                 conn,
-                m: msg,
-                mek,
+                m,
                 text,
                 args,
                 isOwner,
                 reply: async (text) => {
-                    // ════════════════════════════════════════════════════════════════════
-                    // SPEED MODE V2 - Cache Command Response (NEW)
-                    // ════════════════════════════════════════════════════════════════════
-                    if (global.speedMode && global.speedMode.enabled) {
-                        const cacheKey = `${cmdName}:${text}`;
-                        global.speedMode.cacheCommand(cacheKey, text);
-                    }
-                    // ════════════════════════════════════════════════════════════════════
-                    
-                    return await conn.sendMessage(msg.from, { text }, { quoted: mek });
+                    return await conn.sendMessage(m.from, { text }, { quoted: mek });
                 },
                 react: async (emoji) => {
-                    try {
-                        return await conn.sendMessage(msg.from, {
-                            react: { text: emoji, key: mek.key }
-                        });
-                    } catch (e) {}
+                    return await conn.sendMessage(m.from, {
+                        react: { text: emoji, key: mek.key }
+                    });
                 }
             };
 
-            await cmd.function(conn, mek, msg, extra);
+            await cmd.function(conn, mek, m, extra);
 
             // Log command usage to database
             if (config.MONGODB) {
-                try {
-                    const { logCommand } = require('./lib/database');
-                    await logCommand(cmd.pattern, msg.sender, msg.isGroup ? msg.from : null);
-                } catch (e) {}
+                const { logCommand } = require('./lib/database');
+                await logCommand(cmd.pattern, m.sender, m.isGroup ? m.from : null);
             }
 
         } catch (e) {
@@ -584,8 +507,6 @@ async function startBot() {
             }
         }
     });
-
-    // ════════════════════════════════════════════════════════════════════
 
     return conn;
 }
@@ -635,13 +556,12 @@ app.get('/', (req, res) => {
                             <li>🛠️ Utility Commands</li>
                             <li>💾 Database Integration</li>
                             <li>📊 44+ Commands Total</li>
-                            <li>⚡ Speed Mode V2 (Pure Optimization)</li>
                         </ul>
                     </div>
                     
                     <p style="margin-top: 30px;">
                         Created with ❤️ by Shehan Vimukthi<br>
-                        Enhanced with AI + Speed Mode V2
+                        Enhanced with AI
                     </p>
                 </div>
             </body>
@@ -654,9 +574,7 @@ app.get('/health', (req, res) => {
         status: 'ok',
         uptime: process.uptime(),
         version: '2.0.0',
-        enhanced: true,
-        speedModeEnabled: global.speedMode?.enabled || false,
-        speedModeLevel: global.speedMode?.optimizationLevel || 'disabled'
+        enhanced: true
     });
 });
 
