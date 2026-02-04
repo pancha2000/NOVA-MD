@@ -286,7 +286,7 @@ async (conn, mek, m, { reply, text }) => {
             return await reply(
                 '❌ YOUTUBE_API is not set in config.env!\n\n' +
                 'Open your config.env file and add:\n' +
-                'YOUTUBE_API=grateful-philippine-h79160251-7c562040.koyeb.app'
+                'YOUTUBE_API=operational-babbie-h79160251-a8340c9a.koyeb.app'
             );
         }
 
@@ -433,7 +433,7 @@ async (conn, mek, m, { reply, text }) => {
             return await reply(
                 '❌ YOUTUBE_API is not set in config.env!\n\n' +
                 'Open your config.env file and add:\n' +
-                'YOUTUBE_API=grateful-philippine-h79160251-7c562040.koyeb.app'
+                'YOUTUBE_API=operational-babbie-h79160251-a8340c9a.koyeb.app'
             );
         }
 
