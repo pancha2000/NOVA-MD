@@ -1,5 +1,5 @@
 // plugins/mega.js
-const { cmd } = require('../command');
+const { cmd } = require('../lib/commands');
 const { File } = require('megajs');
 const fs = require('fs');
 const path = require('path');
