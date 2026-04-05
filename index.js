@@ -35,7 +35,7 @@ const {
 
 // ── Express ───────────────────────────────────────────────────────────────────
 const app  = express();
-const PORT = config.PORT || 8000;
+const PORT = config.PORT || 3001;
 
 // ── Store ────────────────────────────────────────────────────────────────────
 let store = null;
@@ -92,29 +92,43 @@ const downloadSession = withErrorHandler('Session Download')(async function () {
 
     console.log('📥 Mega.nz ඉදල session download කරනවා...');
 
-    // Strip any custom prefix  (NOVA~, APEX~, etc.)
-    let sessionUrl = config.SESSION_ID.trim().replace(/^[A-Z0-9_-]+~/i, '');
+    try {
+        // PREFIX strip — NOVA~, APEX~, apex-md~ etc.
+        let sessionUrl = config.SESSION_ID.trim();
+        sessionUrl = sessionUrl.replace(/^NOVA~/i, '');
+        sessionUrl = sessionUrl.replace(/^APEX~/i, '');
+        sessionUrl = sessionUrl.replace(/^apex-md~/i, '');
+        sessionUrl = sessionUrl.replace(/^[A-Za-z0-9_-]+~/i, ''); // catch all other prefixes
 
-    if (!sessionUrl.includes('mega.nz')) {
-        sessionUrl = `https://mega.nz/file/${sessionUrl}`;
-    }
+        if (!sessionUrl.startsWith('https://')) {
+            sessionUrl = `https://mega.nz/file/${sessionUrl}`;
+        }
 
-    console.log('🔗 Mega link:', sessionUrl);
+        console.log('🔗 Mega URL:', sessionUrl);
 
-    const file = File.fromURL(sessionUrl);
-    await file.loadAttributes();
+        const file = File.fromURL(sessionUrl);
+        await file.loadAttributes();
 
-    const data = await new Promise((resolve, reject) => {
-        const timer = setTimeout(() => reject(new Error('Download timeout (60s)')), 60000);
-        file.download((err, buf) => {
-            clearTimeout(timer);
-            if (err) reject(err); else resolve(buf);
+        const data = await new Promise((resolve, reject) => {
+            const timer = setTimeout(
+                () => reject(new Error('Download timeout — 60s exceeded')),
+                60000
+            );
+            file.download((err, buf) => {
+                clearTimeout(timer);
+                if (err) reject(err); else resolve(buf);
+            });
         });
-    });
 
-    fs.writeFileSync(credsPath, data);
-    console.log('✅ Session download සාර්ථකයි!');
-    return true;
+        fs.writeFileSync(credsPath, data);
+        console.log('✅ Session download සාර්ථකයි!');
+        return true;
+
+    } catch (error) {
+        console.log('❌ Mega Session Error:', error.message);
+        console.log('💡 SESSION_ID හරිද බලන්න. Format: NOVA~FileCode#Key');
+        throw error;
+    }
 });
 
 // ── Bot Core ──────────────────────────────────────────────────────────────────
