@@ -1,375 +1,350 @@
-'use strict';
-
 /**
- * ╔════════════════════════════════════════════╗
- * ║          APEX-MD V2  —  index.js           ║
- * ║       Fresh rewrite by Shehan Vimukthi     ║
- * ╚════════════════════════════════════════════╝
+ * ╔═══════════════════════════════════════════╗
+ * ║        NOVA-MD  WhatsApp Bot              ║
+ * ║   Mega Session | Plugin Architecture      ║
+ * ╚═══════════════════════════════════════════╝
  */
 
-// ── Imports ───────────────────────────────────────────────────────────────────
+const Baileys = require('@whiskeysockets/baileys');
 const {
-    default:               makeWASocket,
+    default: makeWASocket,
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    Browsers,
-    makeCacheableSignalKeyStore,
-    jidNormalizedUser,
-    getContentType,
-    downloadMediaMessage,
-    isJidBroadcast,
-    isJidGroup
-} = require('@whiskeysockets/baileys');
+    Browsers
+} = Baileys;
 
-const pino    = require('pino');
-const fs      = require('fs');
-const path    = require('path');
+const makeInMemoryStore = Baileys.makeInMemoryStore || null;
+
+const pino   = require('pino');
+const fs     = require('fs');
+const path   = require('path');
 const express = require('express');
+const { File } = require('megajs');
 
-const config           = require('./config');
-const { cmd, findCmd } = require('./lib/commands');
+const config = require('./config');
+const { connectDB }     = require('./lib/database');
+const { handler }       = require('./lib/commands');
+const { serialize }     = require('./lib/functions');
+const {
+    setupGlobalErrorHandlers,
+    sendErrorToOwner,
+    sendStartupNotification,
+    withErrorHandler
+} = require('./lib/errorHandler');
 
-// ── Silent logger (avoids Baileys noise) ─────────────────────────────────────
-const logger = pino({ level: 'silent' });
+// ── Express ───────────────────────────────────────────────────────────────────
+const app  = express();
+const PORT = config.PORT || 8000;
+
+// ── Store ────────────────────────────────────────────────────────────────────
+let store = null;
+if (makeInMemoryStore && typeof makeInMemoryStore === 'function') {
+    try {
+        store = makeInMemoryStore({ logger: pino().child({ level: 'silent', stream: 'store' }) });
+        console.log('✅ Message store enabled');
+    } catch (e) {
+        console.log('⚠️  Store init failed:', e.message);
+    }
+}
 
 // ── Folders ───────────────────────────────────────────────────────────────────
-const AUTH_DIR = path.join(__dirname, 'auth_info');
-const TEMP_DIR = path.join(__dirname, 'temp');
-fs.mkdirSync(AUTH_DIR, { recursive: true });
-fs.mkdirSync(TEMP_DIR, { recursive: true });
+const authFolder = path.join(__dirname, 'auth_info');
+const tmpFolder  = path.join(__dirname, 'tmp');
+[authFolder, tmpFolder].forEach(dir => {
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
+});
 
-// ── Express keep-alive (Oracle Cloud firewall ගාන port open ගන්න) ────────────
-const app = express();
-app.get('/',       (_q, r) => r.send(`✅ ${config.BOT_NAME} is running`));
-app.get('/health', (_q, r) => r.json({ ok: true, uptime: process.uptime() }));
-app.listen(config.PORT, '0.0.0.0', () =>
-    console.log(`🌐 Web  →  http://0.0.0.0:${config.PORT}`)
-);
-
-// ── Plugin loader ─────────────────────────────────────────────────────────────
-function loadPlugins() {
-    const dir = path.join(__dirname, 'plugins');
-    if (!fs.existsSync(dir)) { console.log('⚠️  plugins/ folder නැහැ'); return; }
-
+// ── Load Plugins ──────────────────────────────────────────────────────────────
+const loadPlugins = withErrorHandler('Plugin Loader')(function () {
+    const pluginDir = path.join(__dirname, 'plugins');
+    if (!fs.existsSync(pluginDir)) {
+        console.log('⚠️  Plugins folder නැහැ!');
+        return;
+    }
     let ok = 0, fail = 0;
-    for (const f of fs.readdirSync(dir).filter(n => n.endsWith('.js'))) {
-        try   { require(path.join(dir, f)); ok++;   }
-        catch (e) { console.log(`❌ [${f}]`, e.message); fail++; }
-    }
-    console.log(`📦 Plugins: ${ok} loaded${fail ? `, ${fail} failed` : ''}`);
-}
+    fs.readdirSync(pluginDir)
+        .filter(f => f.endsWith('.js'))
+        .forEach(file => {
+            try {
+                require(path.join(pluginDir, file));
+                ok++;
+            } catch (e) {
+                console.log(`❌ Plugin [${file}]:`, e.message);
+                fail++;
+            }
+        });
+    console.log(`✅ Plugins loaded: ${ok}${fail ? `  ❌ failed: ${fail}` : ''}`);
+});
 
-// ── Message body extractor (safe, covers all WhatsApp message types) ──────────
-function extractBody(msg) {
-    if (!msg) return '';
-    return (
-        msg.conversation                                                ||
-        msg.extendedTextMessage?.text                                   ||
-        msg.imageMessage?.caption                                       ||
-        msg.videoMessage?.caption                                       ||
-        msg.documentMessage?.caption                                    ||
-        msg.buttonsResponseMessage?.selectedButtonId                    ||
-        msg.listResponseMessage?.singleSelectReply?.selectedRowId       ||
-        msg.templateButtonReplyMessage?.selectedId                      ||
-        msg.interactiveResponseMessage?.nativeFlowResponseMessage?.paramsJson ||
-        ''
-    );
-}
-
-// ── Serialize incoming message into a clean object ────────────────────────────
-async function serialize(raw, conn) {
-    // ── Guard: must have key + remoteJid
-    if (!raw?.key?.remoteJid) return null;
-
-    const type = getContentType(raw.message);
-    if (!type) return null;
-
-    const m       = {};
-    m.key         = raw.key;
-    m.id          = raw.key.id;
-    m.from        = raw.key.remoteJid;
-    m.fromMe      = raw.key.fromMe || false;
-    m.isGroup     = isJidGroup(m.from);
-    m.type        = type;
-    m.message     = raw.message;
-    m.body        = extractBody(raw.message);
-    m.pushName    = raw.pushName || '';
-
-    // ── Sender JID (normalized — removes :0 device suffix)
-    m.sender = jidNormalizedUser(
-        m.fromMe    ? conn.user.id
-        : m.isGroup ? (raw.key.participant || '')
-        : m.from
-    );
-
-    // ── Group admin status (only fetched for group messages)
-    m.isAdmin    = false;
-    m.isBotAdmin = false;
-
-    if (m.isGroup) {
-        try {
-            const meta = await conn.groupMetadata(m.from);
-            const botId = jidNormalizedUser(conn.user.id);
-
-            const find = jid => meta.participants.find(
-                p => jidNormalizedUser(p.id) === jidNormalizedUser(jid)
-            );
-            const isAdminRole = p => p?.admin === 'admin' || p?.admin === 'superadmin';
-
-            m.isAdmin    = isAdminRole(find(m.sender));
-            m.isBotAdmin = isAdminRole(find(botId));
-            m.participants   = meta.participants;
-            m.groupMetadata  = meta;
-        } catch (_) { /* network issue — skip silently */ }
+// ── Download Session from Mega ────────────────────────────────────────────────
+const downloadSession = withErrorHandler('Session Download')(async function () {
+    if (!config.SESSION_ID) {
+        console.log('⚠️  SESSION_ID නැහැ config.env!');
+        return false;
     }
 
-    // ── Quoted message
-    const ctx = raw.message?.extendedTextMessage?.contextInfo;
-    if (ctx?.quotedMessage) {
-        const qt = getContentType(ctx.quotedMessage);
-        m.quoted = {
-            type:    qt,
-            sender:  ctx.participant || '',
-            text:    ctx.quotedMessage?.[qt]?.text
-                  || ctx.quotedMessage?.[qt]?.caption
-                  || '',
-            message: ctx.quotedMessage,
-            download: () => downloadMediaMessage(
-                { key: raw.key, message: ctx.quotedMessage }, 'buffer', {}
-            )
-        };
-    } else {
-        m.quoted = null;
+    const credsPath = path.join(authFolder, 'creds.json');
+    if (fs.existsSync(credsPath)) {
+        console.log('✅ Session දැනටමත් තියනවා');
+        return true;
     }
 
-    m.mentionedJid = raw.message?.[type]?.contextInfo?.mentionedJid || [];
+    console.log('📥 Mega.nz ඉදල session download කරනවා...');
 
-    // ── Helpers
-    m.download = () => downloadMediaMessage(raw, 'buffer', {});
+    // Strip any custom prefix  (NOVA~, APEX~, etc.)
+    let sessionUrl = config.SESSION_ID.trim().replace(/^[A-Z0-9_-]+~/i, '');
 
-    m.react = emoji => conn.sendMessage(m.from, {
-        react: { text: emoji, key: raw.key }
+    if (!sessionUrl.includes('mega.nz')) {
+        sessionUrl = `https://mega.nz/file/${sessionUrl}`;
+    }
+
+    console.log('🔗 Mega link:', sessionUrl);
+
+    const file = File.fromURL(sessionUrl);
+    await file.loadAttributes();
+
+    const data = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('Download timeout (60s)')), 60000);
+        file.download((err, buf) => {
+            clearTimeout(timer);
+            if (err) reject(err); else resolve(buf);
+        });
     });
 
-    return m;
-}
+    fs.writeFileSync(credsPath, data);
+    console.log('✅ Session download සාර්ථකයි!');
+    return true;
+});
 
-// ── Database (optional) ───────────────────────────────────────────────────────
-let db = null;
-async function initDB() {
-    if (!config.MONGODB) return;
-    try {
-        const mongoose = require('mongoose');
-        await mongoose.connect(config.MONGODB);
-        console.log('✅ MongoDB connected');
-        db = mongoose;
-    } catch (e) {
-        console.log('⚠️  MongoDB failed:', e.message);
-    }
-}
-
-// ── Main bot function ─────────────────────────────────────────────────────────
+// ── Bot Core ──────────────────────────────────────────────────────────────────
 async function startBot() {
     console.log('');
-    console.log('╔══════════════════════════════════════════╗');
-    console.log('║       🚀  APEX-MD V2  Starting...        ║');
-    console.log('╚══════════════════════════════════════════╝');
+    console.log('╔═══════════════════════════════════════════╗');
+    console.log('║         🚀 NOVA-MD  Starting...          ║');
+    console.log('╚═══════════════════════════════════════════╝');
     console.log('');
 
-    await initDB();
-    loadPlugins();
+    let conn = null;
 
-    // Auth state
-    const { state, saveCreds } = await useMultiFileAuthState(AUTH_DIR);
-    const { version }          = await fetchLatestBaileysVersion();
+    try {
+        if (config.SESSION_ID) await downloadSession();
+        if (config.MONGODB)    await connectDB();
+        loadPlugins();
 
-    console.log('📡 Baileys version:', version.join('.'));
+        const { state, saveCreds } = await useMultiFileAuthState(authFolder);
+        const { version }          = await fetchLatestBaileysVersion();
 
-    // Create socket
-    const conn = makeWASocket({
-        version,
-        auth: {
-            creds: state.creds,
-            keys:  makeCacheableSignalKeyStore(state.keys, logger)
-        },
-        logger,
-        printQRInTerminal:            !config.USE_PAIRING_CODE,
-        browser:                      Browsers.ubuntu('Chrome'),
-        connectTimeoutMs:             60_000,
-        defaultQueryTimeoutMs:        0,
-        keepAliveIntervalMs:          25_000,
-        retryRequestDelayMs:          2_000,
-        maxMsgRetryCount:             3,
-        fireInitQueries:              true,
-        generateHighQualityLinkPreview: true,
-        syncFullHistory:              false,
-        markOnlineOnConnect:          true,
-        getMessage: async () => undefined   // store use කරන්නෑ — memory save
-    });
+        conn = makeWASocket({
+            version,
+            logger: pino({ level: 'silent' }),
+            printQRInTerminal: config.USE_PAIRING_CODE !== 'true',
+            browser: Browsers.ubuntu('NOVA-MD'),
+            auth: state,
+            getMessage: async (key) => {
+                try {
+                    if (!key?.remoteJid) return undefined;
+                    if (store) return (await store.loadMessage(key.remoteJid, key.id))?.message || undefined;
+                    return { conversation: 'NOVA-MD' };
+                } catch { return undefined; }
+            }
+        });
 
-    // ── Save creds whenever they change ──────────────────────────────────────
-    conn.ev.on('creds.update', saveCreds);
+        setupGlobalErrorHandlers(conn);
+        store?.bind(conn.ev);
+        conn.ev.on('creds.update', saveCreds);
 
-    // ── Connection state ──────────────────────────────────────────────────────
-    conn.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
-
-        if (qr) {
-            console.log('');
-            console.log('📷 QR code ready — scan with WhatsApp');
-            require('qrcode-terminal').generate(qr, { small: true });
-        }
-
-        if (connection === 'open') {
-            const id = jidNormalizedUser(conn.user.id);
-            console.log('');
-            console.log('✅ WhatsApp connected!');
-            console.log(`   Number : ${id}`);
-            console.log(`   Name   : ${conn.user.name || 'N/A'}`);
-            console.log('');
-
-            // Pairing code — only request if not yet registered
-            if (config.USE_PAIRING_CODE && !conn.authState.creds.registered) {
-                if (!config.PHONE_NUMBER) {
-                    console.log('⚠️  PHONE_NUMBER config.env ඇතුළේ set කරන්න!');
-                    return;
-                }
-                await new Promise(r => setTimeout(r, 3000));
+        // Pairing code
+        if (config.USE_PAIRING_CODE === 'true' && !conn.authState.creds.registered) {
+            if (!config.PHONE_NUMBER) {
+                console.log('⚠️  PHONE_NUMBER නැහැ config.env!');
+                process.exit(0);
+            }
+            setTimeout(async () => {
                 try {
                     const code = await conn.requestPairingCode(config.PHONE_NUMBER);
                     console.log('');
-                    console.log('╔══════════════════════════════════════════╗');
-                    console.log(`║   📱 Pairing Code :  ${code.padEnd(19)}║`);
-                    console.log('╚══════════════════════════════════════════╝');
+                    console.log('╔═══════════════════════════════════════════╗');
+                    console.log(`║  📱 Pairing Code: ${code.padEnd(24)}║`);
+                    console.log('╚═══════════════════════════════════════════╝');
                     console.log('');
                 } catch (e) {
-                    console.log('❌ Pairing code error:', e.message);
+                    await sendErrorToOwner(conn, e, 'Pairing Code');
+                }
+            }, 3000);
+        }
+
+        // Connection events
+        conn.ev.on('connection.update', async ({ connection, lastDisconnect }) => {
+            if (connection === 'open') {
+                console.log('✅ NOVA-MD connected!');
+                await sendStartupNotification(conn);
+            }
+            if (connection === 'close') {
+                const shouldReconnect =
+                    lastDisconnect?.error?.output?.statusCode !== DisconnectReason.loggedOut;
+                console.log('🔴 Connection closed. Reconnect:', shouldReconnect);
+                if (shouldReconnect) {
+                    setTimeout(() => startBot(), 3000);
+                } else {
+                    await sendErrorToOwner(conn, new Error('Bot logged out!'), 'Connection');
                 }
             }
-        }
+        });
 
-        if (connection === 'close') {
-            const statusCode  = lastDisconnect?.error?.output?.statusCode;
-            const loggedOut   = statusCode === DisconnectReason.loggedOut;
-            const reason      = lastDisconnect?.error?.message || 'Unknown';
-
-            console.log(`🔌 Disconnected — code: ${statusCode}, reason: ${reason}`);
-
-            if (loggedOut) {
-                console.log('');
-                console.log('⚠️  Logged out!');
-                console.log('   auth_info folder delete කරලා restart කරන්න:');
-                console.log('   rm -rf auth_info && pm2 restart apex-md-v2');
-                console.log('');
-            } else {
-                // Reconnect with backoff
-                const delay = statusCode === 408 ? 10_000 : 5_000;
-                console.log(`⏳ Reconnecting in ${delay / 1000}s...`);
-                setTimeout(startBot, delay);
-            }
-        }
-    });
-
-    // ── Incoming messages ─────────────────────────────────────────────────────
-    conn.ev.on('messages.upsert', async ({ messages, type }) => {
-
-        // ✅ Only real-time messages. 'append' = history sync → skip
-        if (type !== 'notify') return;
-
-        for (const raw of messages) {
+        // Message handler
+        conn.ev.on('messages.upsert', async ({ messages }) => {
             try {
-                // Skip: no content, status broadcast
-                if (!raw?.message)                     continue;
-                if (!raw?.key?.remoteJid)              continue;
-                if (isJidBroadcast(raw.key.remoteJid)) continue;
+                if (!messages?.length) return;
+                const mek = messages[0];
+                if (!mek?.message?.conversation && !mek?.message?.extendedTextMessage &&
+                    !mek?.message?.imageMessage && !mek?.message?.videoMessage) return;
+                if (!mek.key?.remoteJid) return;
 
-                const m = await serialize(raw, conn);
-                if (!m) continue;
+                const m = await serialize(mek, conn);
+                if (!m) return;
 
                 // Auto read
-                if (config.AUTO_READ) {
-                    await conn.readMessages([raw.key]).catch(() => {});
+                if (config.AUTO_READ === 'true') await conn.readMessages([mek.key]);
+
+                // Status broadcast
+                if (m.from === 'status@broadcast') {
+                    if (config.AUTO_STATUS_READ === 'true') await conn.readMessages([mek.key]);
+                    return;
                 }
 
-                // ✅ Skip own messages — normalized compare
-                if (jidNormalizedUser(m.sender) === jidNormalizedUser(conn.user.id)) continue;
+                // Skip own messages
+                if (m.sender === conn.user.id) return;
 
-                // ── Command matching ──────────────────────────────────────────
-                const prefix = config.PREFIX;
-                if (!m.body.startsWith(prefix)) continue;
+                // Typing indicator
+                if (config.AUTO_TYPING === 'true')
+                    await conn.sendPresenceUpdate('composing', m.from);
 
-                const parts   = m.body.slice(prefix.length).trim().split(/\s+/);
-                const cmdName = parts.shift().toLowerCase();
-                const text    = parts.join(' ');
-                const args    = parts;
+                // ── Command dispatch ──────────────────────────────────────────
+                const body = m.body || '';
+                if (!body.startsWith(config.PREFIX)) return;
 
-                const command = findCmd(cmdName);
-                if (!command) continue;
+                const args    = body.slice(config.PREFIX.length).trim().split(/ +/);
+                const cmdName = args[0].toLowerCase();
+                const text    = args.slice(1).join(' ');
+                const cmd     = handler.findCommand(cmdName);
+                if (!cmd) return;
 
                 // Permission checks
                 const isOwner = config.isOwner(m.sender);
 
-                if (command.isOwner && !isOwner) {
+                if (cmd.isOwner && !isOwner)
+                    return conn.sendMessage(m.from,
+                        { text: '❌ Owner විතරයි use කරන්න පුළුවන්!' }, { quoted: mek });
+
+                if (cmd.isGroup && !m.isGroup)
+                    return conn.sendMessage(m.from,
+                        { text: '❌ Group commands inbox ද්දී use කරන්න බැහැ!' }, { quoted: mek });
+
+                if (cmd.isPrivate && m.isGroup)
+                    return conn.sendMessage(m.from,
+                        { text: '❌ Inbox එකේ විතරයි use කරන්න!' }, { quoted: mek });
+
+                if (cmd.react)
                     await conn.sendMessage(m.from,
-                        { text: '❌ Owner only command!' }, { quoted: raw }
-                    );
-                    continue;
-                }
+                        { react: { text: cmd.react, key: mek.key } });
 
-                if (command.isGroup && !m.isGroup) {
+                if (config.DEBUG === 'true')
+                    console.log(`[CMD] ${m.sender.split('@')[0]}: ${body}`);
+
+                // Execute
+                try {
+                    await cmd.function(conn, mek, m, {
+                        conn, m, text, args, isOwner,
+                        from: m.from,
+                        q: text,
+                        reply: async (txt) => conn.sendMessage(m.from, { text: String(txt) }, { quoted: mek }),
+                        react: async (emoji) => conn.sendMessage(m.from, { react: { text: emoji, key: mek.key } })
+                    });
+
+                    if (config.MONGODB) {
+                        const { logCommand } = require('./lib/database');
+                        await logCommand(cmd.pattern, m.sender, m.isGroup ? m.from : null);
+                    }
+                } catch (cmdErr) {
+                    console.log(`❌ CMD [${cmd.pattern}]:`, cmdErr.message);
+                    await sendErrorToOwner(conn, cmdErr, `Command: ${cmd.pattern}`);
                     await conn.sendMessage(m.from,
-                        { text: '❌ Group only command!' }, { quoted: raw }
-                    );
-                    continue;
+                        { text: `❌ Error: ${cmdErr.message}` }, { quoted: mek });
                 }
-
-                if (command.isPrivate && m.isGroup) {
-                    await conn.sendMessage(m.from,
-                        { text: '❌ Private chat only command!' }, { quoted: raw }
-                    );
-                    continue;
-                }
-
-                // React
-                if (command.react) {
-                    conn.sendMessage(m.from, {
-                        react: { text: command.react, key: raw.key }
-                    }).catch(() => {});
-                }
-
-                // Extra helpers passed to every plugin
-                const extra = {
-                    conn, m, mek: raw,
-                    text, args, isOwner,
-                    reply: txt  => conn.sendMessage(m.from, { text: String(txt) }, { quoted: raw }),
-                    react: emoji => conn.sendMessage(m.from, { react: { text: emoji, key: raw.key } })
-                };
-
-                // Run command
-                await command.function(conn, raw, m, extra);
 
             } catch (e) {
-                // Bad MAC / decrypt errors — silently skip, never crash
-                const msg = e?.message || '';
-                if (msg.includes('Bad MAC') || msg.includes('decrypt') || msg.includes('Signal')) {
-                    continue;
-                }
-                console.log('⚠️  Handler error:', msg);
+                if (e.message?.includes('remoteJid')) return; // ignore noise
+                console.log('❌ Message handler error:', e.message);
+                if (conn) await sendErrorToOwner(conn, e, 'Message Handler');
             }
-        }
-    });
+        });
 
-    return conn;
+        // Group participant events (welcome/goodbye)
+        conn.ev.on('group-participants.update', async ({ id, participants, action }) => {
+            try {
+                const { getGroup } = require('./lib/database');
+                const group = await getGroup(id);
+                if (!group) return;
+
+                const meta = await conn.groupMetadata(id);
+
+                if (action === 'add' && group.welcome) {
+                    for (const p of participants) {
+                        let msg = (group.welcomeMessage || '👋 Welcome @user to @group!')
+                            .replace('@user', `@${p.split('@')[0]}`)
+                            .replace('@group', meta.subject);
+                        await conn.sendMessage(id, { text: msg, mentions: [p] });
+                    }
+                }
+
+                if (action === 'remove' && group.goodbye) {
+                    for (const p of participants) {
+                        let msg = (group.goodbyeMessage || '👋 Goodbye @user!')
+                            .replace('@user', `@${p.split('@')[0]}`);
+                        await conn.sendMessage(id, { text: msg });
+                    }
+                }
+            } catch (e) {
+                console.log('Group event error:', e.message);
+            }
+        });
+
+        return conn;
+
+    } catch (e) {
+        console.log('❌ Startup Error:', e.message);
+        if (conn) await sendErrorToOwner(conn, e, 'Startup');
+        console.log('⏳ Retrying in 10s...');
+        setTimeout(() => startBot(), 10000);
+    }
 }
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-startBot().catch(e => {
-    console.log('❌ Boot error:', e.message);
-    setTimeout(startBot, 10_000);
+// ── Web server ────────────────────────────────────────────────────────────────
+app.get('/', (_req, res) => res.send(`
+<html><head><title>NOVA-MD</title>
+<style>
+  body{font-family:Arial,sans-serif;text-align:center;padding:50px;
+    background:linear-gradient(135deg,#0f2027,#203a43,#2c5364);color:#fff;}
+  .box{background:rgba(255,255,255,.08);padding:40px;border-radius:20px;
+    backdrop-filter:blur(10px);display:inline-block;}
+  h1{font-size:2.5em;} .ok{color:#4ade80;font-size:1.3em;font-weight:bold;}
+</style></head><body>
+<div class="box">
+  <h1>🤖 NOVA-MD</h1>
+  <p class="ok">✅ Active & Running</p>
+  <p style="margin-top:20px;opacity:.7">WhatsApp Bot — Mega Session | Plugin System</p>
+</div></body></html>
+`));
+
+app.get('/health', (_req, res) => res.json({
+    status: 'ok', uptime: process.uptime(), version: '1.0.0'
+}));
+
+app.listen(PORT, () => {
+    console.log(`🌐 Web server: http://localhost:${PORT}`);
+    startBot();
 });
 
-// ── Crash guards ──────────────────────────────────────────────────────────────
-process.on('uncaughtException',  e => console.log('⚠️  uncaughtException:',  e.message));
-process.on('unhandledRejection', e => console.log('⚠️  unhandledRejection:', e?.message || e));
-process.on('SIGINT',  () => { console.log('\n👋 Stopped.'); process.exit(0); });
-process.on('SIGTERM', () => { console.log('\n👋 Stopped.'); process.exit(0); });
+process.on('SIGINT',  () => { console.log('\n👋 Shutting down...'); process.exit(0); });
+process.on('SIGTERM', () => { console.log('\n👋 Shutting down...'); process.exit(0); });
