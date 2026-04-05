@@ -14,7 +14,8 @@ const {
     DisconnectReason,
     fetchLatestBaileysVersion,
     Browsers,
-    delay
+    delay,
+    jidNormalizedUser
 } = Baileys;
 
 const makeInMemoryStore = Baileys.makeInMemoryStore || null;
@@ -288,8 +289,11 @@ async function startBot() {
         });
 
         // Messages handler with comprehensive error handling
-        conn.ev.on('messages.upsert', async ({ messages }) => {
+        conn.ev.on('messages.upsert', async ({ messages, type }) => {
             try {
+                // ✅ FIX: Only process real incoming messages, skip history sync
+                if (type !== 'notify') return;
+
                 // ✅ VALIDATION: Check if messages array exists and has items
                 if (!messages || !Array.isArray(messages) || messages.length === 0) {
                     return;
@@ -336,7 +340,7 @@ async function startBot() {
                 }
 
                 // Ignore own messages
-                if (m.sender === conn.user.id) return;
+                if (jidNormalizedUser(m.sender) === jidNormalizedUser(conn.user.id)) return;
 
                 // Auto typing/recording
                 if (config.AUTO_TYPING === 'true') {
