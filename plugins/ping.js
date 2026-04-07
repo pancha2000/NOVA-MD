@@ -1,7 +1,7 @@
 'use strict';
 
 const { cmd }     = require('../lib/commands');
-const { runtime } = require('../lib/utils');
+const { runtime } = require('../lib/functions');
 const config      = require('../config');
 
 // ── .ping ────────────────────────────────────────────────────────────────────
