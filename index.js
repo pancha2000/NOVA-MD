@@ -364,9 +364,22 @@ app.get('/health', (_req, res) => res.json({
     status: 'ok', uptime: process.uptime(), version: '1.0.0'
 }));
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`🌐 Web server: http://localhost:${PORT}`);
     startBot();
+});
+
+server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+        console.log(`⚠️  Port ${PORT} use වෙනවා — port ${Number(PORT)+1} try කරනවා...`);
+        server.close();
+        app.listen(Number(PORT) + 1, () => {
+            console.log(`🌐 Web server: http://localhost:${Number(PORT)+1}`);
+            startBot();
+        });
+    } else {
+        console.log('❌ Server error:', err.message);
+    }
 });
 
 process.on('SIGINT',  () => { console.log('\n👋 Shutting down...'); process.exit(0); });
