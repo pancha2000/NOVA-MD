@@ -213,15 +213,8 @@ async function startBot() {
                 if (!messages?.length) return;
                 const mek = messages[0];
 
-                // ✅ BUG FIX #1: message types expand කළා (document, audio, sticker, buttons etc.)
-                const SUPPORTED_TYPES = [
-                    'conversation', 'extendedTextMessage',
-                    'imageMessage', 'videoMessage',
-                    'documentMessage', 'audioMessage', 'stickerMessage',
-                    'buttonsResponseMessage', 'listResponseMessage',
-                    'templateButtonReplyMessage'
-                ];
-                if (!mek?.message || !SUPPORTED_TYPES.some(t => mek.message[t])) return;
+                // Message basic check — serialize() handles type detection
+                if (!mek?.message) return;
                 if (!mek.key?.remoteJid) return;
 
                 const m = await serialize(mek, conn);
@@ -364,22 +357,9 @@ app.get('/health', (_req, res) => res.json({
     status: 'ok', uptime: process.uptime(), version: '1.0.0'
 }));
 
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
     console.log(`🌐 Web server: http://localhost:${PORT}`);
     startBot();
-});
-
-server.on('error', (err) => {
-    if (err.code === 'EADDRINUSE') {
-        console.log(`⚠️  Port ${PORT} use වෙනවා — port ${Number(PORT)+1} try කරනවා...`);
-        server.close();
-        app.listen(Number(PORT) + 1, () => {
-            console.log(`🌐 Web server: http://localhost:${Number(PORT)+1}`);
-            startBot();
-        });
-    } else {
-        console.log('❌ Server error:', err.message);
-    }
 });
 
 process.on('SIGINT',  () => { console.log('\n👋 Shutting down...'); process.exit(0); });
