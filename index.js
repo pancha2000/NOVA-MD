@@ -208,16 +208,28 @@ async function startBot() {
 
         // Message handler
         conn.ev.on('messages.upsert', async ({ messages, type }) => {
+            console.log('[DBG] upsert type:', type, 'msgs:', messages?.length);
             if (type !== 'notify') return;
             try {
                 if (!messages?.length) return;
                 const mek = messages[0];
 
-                // Message basic check — serialize() handles type detection
-                if (!mek?.message) return;
+                console.log('[DBG] msgKeys:', JSON.stringify(Object.keys(mek?.message||{})));
+                // ✅ BUG FIX #1: message types expand කළා (document, audio, sticker, buttons etc.)
+                const SUPPORTED_TYPES = [
+                    'conversation', 'extendedTextMessage',
+                    'imageMessage', 'videoMessage',
+                    'documentMessage', 'audioMessage', 'stickerMessage',
+                    'buttonsResponseMessage', 'listResponseMessage',
+                    'templateButtonReplyMessage'
+                ];
+                if (!mek?.message || !SUPPORTED_TYPES.some(t => mek.message[t])) return;
+                if(!SUPPORTED_TYPES.some(t=>mek.message[t])) { console.log('[DBG] DROP: type not supported, keys:', Object.keys(mek.message)); return; }
                 if (!mek.key?.remoteJid) return;
 
                 const m = await serialize(mek, conn);
+                if (!m) { console.log('[DBG] DROP: serialize null'); return; }
+                console.log('[DBG] body:', JSON.stringify(m.body), 'sender:', m.sender);
                 if (!m) return;
 
                 // Auto read
@@ -230,7 +242,8 @@ async function startBot() {
                 }
 
                 // ✅ BUG FIX #2: jidNormalizedUser use කළා — JID format mismatch fix
-                if (m.sender === jidNormalizedUser(conn.user?.id || '')) return;
+                if (m.sender === jidNormalizedUser(conn.user?.id || '')) { console.log('[DBG] DROP: own message'); return; }
+                console.log('[DBG] botJid:', jidNormalizedUser(conn.user?.id||''));
 
                 // Typing indicator
                 if (config.AUTO_TYPING === 'true')
@@ -238,13 +251,14 @@ async function startBot() {
 
                 // ── Command dispatch ──────────────────────────────────────────
                 const body = m.body || '';
-                if (!body.startsWith(config.PREFIX)) return;
+                if (!body.startsWith(config.PREFIX)) { console.log('[DBG] DROP: no prefix, body=', JSON.stringify(body)); return; }
 
                 const args    = body.slice(config.PREFIX.length).trim().split(/ +/);
                 const cmdName = args[0].toLowerCase();
                 const text    = args.slice(1).join(' ');
                 const cmd     = handler.findCommand(cmdName);
-                if (!cmd) return;
+                console.log('[DBG] cmd found:', cmd?.pattern || 'NONE');
+                if (!cmd) { console.log('[DBG] CMD not found:', cmdName); return; }
 
                 // Permission checks
                 const isOwner = config.isOwner(m.sender);
