@@ -11,7 +11,8 @@ const {
     useMultiFileAuthState,
     DisconnectReason,
     fetchLatestBaileysVersion,
-    Browsers
+    Browsers,
+    jidNormalizedUser          // ✅ BUG FIX #2: import කළා
 } = Baileys;
 
 const makeInMemoryStore = Baileys.makeInMemoryStore || null;
@@ -93,12 +94,11 @@ const downloadSession = withErrorHandler('Session Download')(async function () {
     console.log('📥 Mega.nz ඉදල session download කරනවා...');
 
     try {
-        // PREFIX strip — NOVA~, APEX~, apex-md~ etc.
         let sessionUrl = config.SESSION_ID.trim();
         sessionUrl = sessionUrl.replace(/^NOVA~/i, '');
         sessionUrl = sessionUrl.replace(/^APEX~/i, '');
         sessionUrl = sessionUrl.replace(/^apex-md~/i, '');
-        sessionUrl = sessionUrl.replace(/^[A-Za-z0-9_-]+~/i, ''); // catch all other prefixes
+        sessionUrl = sessionUrl.replace(/^[A-Za-z0-9_-]+~/i, '');
 
         if (!sessionUrl.startsWith('https://')) {
             sessionUrl = `https://mega.nz/file/${sessionUrl}`;
@@ -211,8 +211,16 @@ async function startBot() {
             try {
                 if (!messages?.length) return;
                 const mek = messages[0];
-                if (!mek?.message?.conversation && !mek?.message?.extendedTextMessage &&
-                    !mek?.message?.imageMessage && !mek?.message?.videoMessage) return;
+
+                // ✅ BUG FIX #1: message types expand කළා (document, audio, sticker, buttons etc.)
+                const SUPPORTED_TYPES = [
+                    'conversation', 'extendedTextMessage',
+                    'imageMessage', 'videoMessage',
+                    'documentMessage', 'audioMessage', 'stickerMessage',
+                    'buttonsResponseMessage', 'listResponseMessage',
+                    'templateButtonReplyMessage'
+                ];
+                if (!mek?.message || !SUPPORTED_TYPES.some(t => mek.message[t])) return;
                 if (!mek.key?.remoteJid) return;
 
                 const m = await serialize(mek, conn);
@@ -227,8 +235,8 @@ async function startBot() {
                     return;
                 }
 
-                // Skip own messages
-                if (m.sender === conn.user.id) return;
+                // ✅ BUG FIX #2: jidNormalizedUser use කළා — JID format mismatch fix
+                if (m.sender === jidNormalizedUser(conn.user?.id || '')) return;
 
                 // Typing indicator
                 if (config.AUTO_TYPING === 'true')
@@ -288,7 +296,7 @@ async function startBot() {
                 }
 
             } catch (e) {
-                if (e.message?.includes('remoteJid')) return; // ignore noise
+                if (e.message?.includes('remoteJid')) return;
                 console.log('❌ Message handler error:', e.message);
                 if (conn) await sendErrorToOwner(conn, e, 'Message Handler');
             }
