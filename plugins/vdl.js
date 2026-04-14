@@ -51,7 +51,7 @@ cmd({
     pattern:  'vdl',
     alias:    ['videodl', 'vd'],
     desc:     'ඕනම website එකේ video download කරන්න (max 180MB)',
-    category: 'downloader',
+    category:  'download',
     use:      '<video URL>',
     react:    '🎬'
 }, async (conn, mek, m, { reply, q }) => {

@@ -50,6 +50,8 @@ async (conn, mek, m, { reply, args }) => {
             fun:      '🎉',
             ai:       '🤖',
             misc:     '🔧',
+            upload:   '📤',
+            downloader: '📥',
         };
 
         let text =
