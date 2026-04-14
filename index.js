@@ -207,7 +207,8 @@ async function startBot() {
         });
 
         // Message handler
-        conn.ev.on('messages.upsert', async ({ messages }) => {
+        conn.ev.on('messages.upsert', async ({ messages, type }) => {
+            if (type !== 'notify') return;
             try {
                 if (!messages?.length) return;
                 const mek = messages[0];
