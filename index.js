@@ -242,7 +242,7 @@ async function startBot() {
                 }
 
                 // ✅ BUG FIX #2: jidNormalizedUser use කළා — JID format mismatch fix
-                if (m.sender === jidNormalizedUser(conn.user?.id || '')) { console.log('[DBG] DROP: own message'); return; }
+                // Own message filter removed — owner uses same number as bot
                 console.log('[DBG] botJid:', jidNormalizedUser(conn.user?.id||''));
 
                 // Typing indicator
