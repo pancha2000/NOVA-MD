@@ -40,6 +40,16 @@ const config = {
     GEMINI_API:        process.env.GEMINI_API        || '',
     OPENAI_API:        process.env.OPENAI_API        || '',
 
+    // ==================== MEGA.NZ ====================
+    MEGA_EMAIL:        process.env.MEGA_EMAIL        || '',
+    MEGA_PASSWORD:     process.env.MEGA_PASSWORD     || '',
+
+    // ==================== GOOGLE DRIVE ====================
+    GDRIVE_CLIENT_ID:      process.env.GDRIVE_CLIENT_ID      || '',
+    GDRIVE_CLIENT_SECRET:  process.env.GDRIVE_CLIENT_SECRET  || '',
+    GDRIVE_REFRESH_TOKEN:  process.env.GDRIVE_REFRESH_TOKEN  || '',
+    GDRIVE_FOLDER_ID:      process.env.GDRIVE_FOLDER_ID      || '',
+
     // ==================== GROUP SETTINGS ====================
     ANTILINK_ENABLED:  process.env.ANTILINK_ENABLED  || 'true',
     ANTILINK_ACTION:   process.env.ANTILINK_ACTION   || 'kick',
