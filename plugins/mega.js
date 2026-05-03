@@ -126,9 +126,12 @@ cmd({
 
     const MEDIA_TYPES = ['imageMessage','videoMessage','documentMessage','audioMessage'];
     const type        = m.type;
-    const quotedType  = m.quoted ? Object.keys(m.quoted)[0] : null;
+    // BUG FIX: m.quoted is the raw quoted message object — get its content type correctly
+    const quotedType  = m.quoted
+        ? Object.keys(m.quoted).find(k => MEDIA_TYPES.includes(k)) || null
+        : null;
     const hasMedia    = MEDIA_TYPES.includes(type);
-    const hasQuoted   = quotedType && MEDIA_TYPES.includes(quotedType);
+    const hasQuoted   = !!quotedType;
 
     if (!hasMedia && !hasQuoted) {
         return reply('📎 File/Image/Video/Audio එකට reply කරලා `.megaup` ලියන්න!');
@@ -146,10 +149,17 @@ cmd({
         let mimeType = 'application/octet-stream';
 
         if (!hasMedia && hasQuoted) {
-            const ctx = mek.message[type]?.contextInfo;
-            dlMsg  = {
-                key:     { remoteJid: m.from, id: ctx?.stanzaId, participant: ctx?.participant },
-                message: ctx?.quotedMessage
+            // BUG FIX: contextInfo can be nested under different message types — search properly
+            const msgObj = mek.message?.[type] || Object.values(mek.message || {})[0];
+            const ctx    = msgObj?.contextInfo;
+            dlMsg = {
+                key: {
+                    remoteJid:   m.from,
+                    id:          ctx?.stanzaId,
+                    participant: ctx?.participant || undefined,
+                    fromMe:      false,
+                },
+                message: ctx?.quotedMessage,
             };
             dlType = quotedType;
         }
@@ -186,10 +196,15 @@ cmd({
         ]);
 
         // Upload file
-        const uploadStream  = storage.upload({ name: fileName, size: buffer.length });
-        const uploadPromise = uploadStream.complete;
-        uploadStream.end(buffer);
-        const uploadedFile = await uploadPromise;
+        // BUG FIX: wrap complete in explicit Promise to handle both callback and promise styles
+        const uploadedFile = await new Promise((resolve, reject) => {
+            const uploadStream = storage.upload(
+                { name: fileName, size: buffer.length },
+                (err, file) => { if (err) reject(err); else resolve(file); }
+            );
+            uploadStream.on('error', reject);
+            uploadStream.end(buffer);
+        });
 
         // Get shareable link
         const link = await uploadedFile.link();

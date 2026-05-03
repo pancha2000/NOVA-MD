@@ -127,8 +127,14 @@ cmd({
             noCallHome: true,
         });
 
+        // BUG FIX: yt-dlp sometimes appends .mp4 if tmpRaw already has extension
         if (!fs.existsSync(tmpRaw)) {
-            return reply('❌ Download failed. File හොයාගන්න බැරිඋනා.');
+            const altPath = tmpRaw + '.mp4';
+            if (fs.existsSync(altPath)) {
+                fs.renameSync(altPath, tmpRaw);
+            } else {
+                return reply('❌ Download failed. File හොයාගන්න බැරිඋනා.');
+            }
         }
 
         const rawMB = (fs.statSync(tmpRaw).size / (1024 * 1024)).toFixed(1);
